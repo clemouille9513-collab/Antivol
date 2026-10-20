@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -22,3 +25,9 @@ jobs:
         with:
           name: Antivol-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publier l'APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-dernier --yes --cleanup-tag || true
+          gh release create apk-dernier app/build/outputs/apk/debug/app-debug.apk --title "Antivol APK" --notes "APK de test" --latest
