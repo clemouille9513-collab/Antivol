@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        ensureListening()
         tick++
     }
 
@@ -186,8 +187,26 @@ class MainActivity : ComponentActivity() {
     fun disableProtection() {
         Prefs.setEnabled(this, false)
         Prefs.setLocked(this, false)
-        stopService(Intent(this, GuardService::class.java))
+        if (!Prefs.isListening(this)) stopService(Intent(this, GuardService::class.java))
         tick++
+    }
+
+    /** Fait écouter la télécommande au S22, même sans protection complète. */
+    fun ensureListening() {
+        if (!Prefs.isEnabled(this) && !Prefs.isListening(this)) return
+        if (!btGranted()) return
+        try { startForegroundService(Intent(this, GuardService::class.java)) } catch (_: Exception) {}
+    }
+
+    /** Appelé quand on affiche la clé de liaison : à partir de là, le S22 écoute les ordres. */
+    fun startListening() {
+        if (!btGranted()) {
+            toast("Autorise d'abord Bluetooth, notifications et position, puis rouvre la clé")
+            askPermissions()
+            return
+        }
+        Prefs.setListening(this, true)
+        ensureListening()
     }
 }
 
@@ -319,7 +338,7 @@ private fun Home(act: MainActivity, tick: Int) {
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
-                        onClick = { verifyThen { dlg = Dlg.Key } },
+                        onClick = { verifyThen { act.startListening(); dlg = Dlg.Key } },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Clé de liaison") }
@@ -360,7 +379,7 @@ private fun Home(act: MainActivity, tick: Int) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(Crypto.pretty(Prefs.secret(act)), fontFamily = FontFamily.Monospace, fontSize = 26.sp)
-                    Text("Tape cette clé dans la télécommande, sur l'autre téléphone. Ne la partage avec personne.",
+                    Text("Tape cette clé dans la télécommande, sur l'autre téléphone. Ce S22 écoute maintenant les ordres. Ne la partage avec personne.",
                         color = cDim, fontSize = 14.sp)
                 }
             },

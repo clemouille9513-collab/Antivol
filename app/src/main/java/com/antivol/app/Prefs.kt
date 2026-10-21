@@ -53,6 +53,10 @@ object Prefs {
         sp(c).edit().putString("history", n.joinToString(";")).apply()
     }
 
+    /** Le S22 écoute la télécommande même si la protection complète n'est pas activée. */
+    fun isListening(c: Context) = sp(c).getBoolean("listen", false)
+    fun setListening(c: Context, v: Boolean) = sp(c).edit().putBoolean("listen", v).apply()
+
     /** Détection des regards indiscrets (caméra avant, toutes les 30 secondes). */
     fun isPeekEnabled(c: Context) = sp(c).getBoolean("peek", true)
     fun setPeekEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("peek", v).apply()
