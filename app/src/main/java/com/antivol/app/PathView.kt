@@ -35,8 +35,8 @@ class PathView(ctx: Context) : View(ctx) {
         val w = max((maxLon - minLon) * k, 1e-6)
         val h = max(maxLat - minLat, 1e-6)
         val scale = minOf((width - 2 * pad) / w, (height - 2 * pad) / h).toFloat()
-        val offX = (width - (w * scale)) / 2f
-        val offY = (height - (h * scale)) / 2f
+        val offX = (width - (w * scale).toFloat()) / 2f
+        val offY = (height - (h * scale).toFloat()) / 2f
 
         fun x(lon: Double) = offX + ((lon - minLon) * k * scale).toFloat()
         fun y(lat: Double) = height - (offY + ((lat - minLat) * scale).toFloat())
