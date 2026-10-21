@@ -69,10 +69,21 @@ class MainActivity : Activity() {
             val perms = mutableListOf<String>()
             if (Build.VERSION.SDK_INT >= 31) perms += Manifest.permission.BLUETOOTH_CONNECT
             if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
+            perms += Manifest.permission.ACCESS_FINE_LOCATION
             if (perms.isNotEmpty()) requestPermissions(perms.toTypedArray(), 1)
         }
         addButton("4. Choisir les appareils de confiance (montre, AirPods...)") {
             verifyThen { chooseDevices() }
+        }
+        addButton("Position : autoriser « tout le temps »") {
+            toast("Ouvre Autorisations, puis Position, puis « Toujours autoriser »")
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            )
+        }
+        addButton("Clé de liaison pour la télécommande") { verifyThen { showKey() } }
+        addButton("Utiliser ce téléphone comme télécommande") {
+            startActivity(Intent(this, RemoteActivity::class.java))
         }
         addButton("5. Ajouter un code") { verifyThen { addCodeDialog() } }
         addButton("Effacer tous les codes") {
@@ -202,6 +213,18 @@ class MainActivity : Activity() {
                 }
             }
             .setNegativeButton("Annuler", null)
+            .show()
+    }
+
+    private fun showKey() {
+        AlertDialog.Builder(this)
+            .setTitle("Clé de liaison")
+            .setMessage(
+                Crypto.pretty(Prefs.secret(this)) +
+                    "\n\nTape cette clé dans la télécommande, sur l'autre téléphone. " +
+                    "Ne la partage avec personne."
+            )
+            .setPositiveButton("OK", null)
             .show()
     }
 

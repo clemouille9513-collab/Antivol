@@ -121,8 +121,18 @@ class LockOverlay(
             PixelFormat.OPAQUE
         )
         wm.addView(layout, params)
+        lp = params
         root = layout
         refresh()
+    }
+
+    private var lp: WindowManager.LayoutParams? = null
+
+    /** Mode éco : écran au plus bas pour économiser la batterie. */
+    fun dim(on: Boolean) {
+        val p = lp ?: return
+        p.screenBrightness = if (on) 0.01f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        root?.let { try { wm.updateViewLayout(it, p) } catch (_: Exception) {} }
     }
 
     fun hide() {

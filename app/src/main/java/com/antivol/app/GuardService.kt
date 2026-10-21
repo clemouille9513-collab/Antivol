@@ -18,16 +18,23 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.BatteryManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import kotlin.math.abs
 
 /**
  * Service qui tourne en permanence (notification "Antivol actif").
- * Il écoute le Bluetooth : si plus aucun appareil de confiance n'est connecté
- * pendant X secondes, il verrouille le téléphone et affiche l'écran à codes.
+ * - Surveille le Bluetooth : si plus aucun appareil de confiance n'est connecté
+ *   pendant X secondes, il verrouille le téléphone et affiche l'écran à codes.
+ * - Écoute les ordres de la télécommande (verrouiller, volé, alarme, parler, localiser, libérer).
  */
 class GuardService : Service() {
 
@@ -35,11 +42,29 @@ class GuardService : Service() {
     private val connected = mutableSetOf<String>()
     private var overlay: LockOverlay? = null
     private var registered = false
+    private var subscription: Ntfy.Subscription? = null
+    private var stolenMode: StolenMode? = null
 
     private val lockRunnable = Runnable { triggerLock() }
 
+    private val locRunnable = object : Runnable {
+        override fun run() {
+            if (Prefs.isLocked(this@GuardService) || Prefs.isStolen(this@GuardService)) {
+                sendLocation()
+                handler.postDelayed(this, 180_000)
+            }
+        }
+    }
+
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_AIRPLANE_MODE_CHANGED) {
+                if (intent.getBooleanExtra("state", false)) {
+                    connected.clear()
+                    triggerLock()
+                }
+                return
+            }
             if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
                 val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
                 if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
@@ -82,6 +107,7 @@ class GuardService : Service() {
                 addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
                 addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
                 addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+                addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED)
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
@@ -92,8 +118,21 @@ class GuardService : Service() {
             refreshConnected()
         }
 
+        // Écoute des ordres de la télécommande.
+        if (subscription == null) {
+            val secret = Prefs.secret(this)
+            subscription = Ntfy.Subscription(Crypto.topic(secret, "cmd"), "1m") { body ->
+                handleCommand(secret, body)
+            }.start()
+        }
+
         // Si le téléphone était déjà verrouillé (redémarrage de l'appli ou du téléphone), on remet l'écran à codes.
         if (Prefs.isLocked(this)) showOverlay()
+        if (Prefs.isStolen(this)) {
+            stolen().start(siren = false, withSpeech = true)
+            handler.removeCallbacks(locRunnable)
+            handler.post(locRunnable)
+        }
 
         // Bouton "Tester" de l'appli : verrouillage dans 10 secondes.
         if (intent?.getBooleanExtra("test", false) == true) {
@@ -105,6 +144,10 @@ class GuardService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        subscription?.stop()
+        subscription = null
+        stolenMode?.stop()
+        stolenMode = null
         if (registered) {
             try { unregisterReceiver(receiver) } catch (_: Exception) {}
             registered = false
@@ -112,6 +155,104 @@ class GuardService : Service() {
         overlay?.hide()
         overlay = null
         super.onDestroy()
+    }
+
+    private fun stolen(): StolenMode {
+        var s = stolenMode
+        if (s == null) {
+            s = StolenMode(this)
+            stolenMode = s
+        }
+        return s
+    }
+
+    // ---------- Ordres de la télécommande ----------
+
+    private fun handleCommand(secret: String, body: String) {
+        val plain = Crypto.decrypt(secret, body) ?: return
+        val p = plain.split("|", limit = 3)
+        if (p.size < 2) return
+        val ts = p[0].toLongOrNull() ?: return
+        if (abs(System.currentTimeMillis() / 1000 - ts) > 300) return
+        val cmd = p[1]
+        val arg = p.getOrElse(2) { "" }.take(200)
+
+        handler.post {
+            when (cmd) {
+                "lock" -> triggerLock()
+                "stolen" -> startStolen()
+                "alarm" -> stolen().start(siren = true, withSpeech = false)
+                "say" -> stolen().say(arg)
+                "locate" -> sendLocation()
+                "free" -> release()
+            }
+            reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}")
+        }
+    }
+
+    private fun reply(text: String) {
+        val secret = Prefs.secret(this)
+        val plain = "${System.currentTimeMillis() / 1000}|$text"
+        Ntfy.publish(Crypto.topic(secret, "rep"), Crypto.encrypt(secret, plain))
+    }
+
+    private fun battery(): Int =
+        getSystemService(BatteryManager::class.java)
+            .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+
+    private fun startStolen() {
+        Prefs.setStolen(this, true)
+        triggerLock()
+        showOverlay()
+        overlay?.dim(true)
+        stolen().start(siren = false, withSpeech = true)
+        sendLocation()
+        handler.removeCallbacks(locRunnable)
+        handler.postDelayed(locRunnable, 180_000)
+    }
+
+    /** Arrête tout : alarme, voix, écran de blocage. */
+    private fun release() {
+        Prefs.setStolen(this, false)
+        Prefs.setLocked(this, false)
+        handler.removeCallbacks(lockRunnable)
+        handler.removeCallbacks(locRunnable)
+        stolenMode?.stop()
+        overlay?.hide()
+        overlay = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendLocation() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        val lm = getSystemService(LocationManager::class.java) ?: return
+
+        val best = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER
+        ).mapNotNull {
+            try { lm.getLastKnownLocation(it) } catch (_: Exception) { null }
+        }.maxByOrNull { it.time }
+        best?.let { replyLocation(it) }
+
+        for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
+            try {
+                if (!lm.isProviderEnabled(provider)) continue
+                lm.requestSingleUpdate(provider, object : LocationListener {
+                    override fun onLocationChanged(location: Location) = replyLocation(location)
+                    @Deprecated("Deprecated in Java")
+                    override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
+                    override fun onProviderEnabled(p: String) {}
+                    override fun onProviderDisabled(p: String) {}
+                }, Looper.getMainLooper())
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun replyLocation(l: Location) {
+        reply("loc|${l.latitude}|${l.longitude}|${l.accuracy.toInt()}")
     }
 
     // ---------- Logique de verrouillage ----------
@@ -130,6 +271,8 @@ class GuardService : Service() {
         if (dpm.isAdminActive(ComponentName(this, AdminReceiver::class.java))) {
             dpm.lockNow()
         }
+        handler.removeCallbacks(locRunnable)
+        handler.postDelayed(locRunnable, 5_000)
     }
 
     private fun showOverlay() {
@@ -138,9 +281,12 @@ class GuardService : Service() {
         if (!Settings.canDrawOverlays(this)) return
         if (overlay != null) return
         overlay = LockOverlay(this) {
-            Prefs.setLocked(this, false)
             overlay = null
-        }.also { it.show() }
+            release()
+        }.also {
+            it.show()
+            if (Prefs.isStolen(this)) it.dim(true)
+        }
     }
 
     /** Regarde quels appareils de confiance sont déjà connectés au démarrage du service. */
@@ -196,7 +342,11 @@ class GuardService : Service() {
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            }
+            startForeground(1, notification, type)
         } else {
             startForeground(1, notification)
         }
