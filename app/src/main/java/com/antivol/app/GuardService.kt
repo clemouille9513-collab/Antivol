@@ -180,6 +180,8 @@ class GuardService : Service() {
             handler.post(locRunnable)
         }
 
+        if (intent?.getBooleanExtra("boot", false) == true) checkAfterBoot()
+
         // Bouton "Tester" de l'appli : verrouillage dans 10 secondes.
         if (intent?.getBooleanExtra("test", false) == true) {
             pendingReason = "Test de verrouillage"
@@ -432,10 +434,15 @@ class GuardService : Service() {
             }, profile)
         }
 
-        // Après 6 secondes, si aucun appareil de confiance n'est détecté : compte à rebours de verrouillage.
+        // Activer la protection ne verrouille jamais le téléphone sur le moment.
+        // Seul un redémarrage du téléphone déclenche une vérification (voir "boot").
+    }
+
+    /** Après un redémarrage : si aucun appareil de confiance n'est là au bout d'1 minute, on verrouille. */
+    private fun checkAfterBoot() {
         handler.postDelayed({
-            if (connected.isEmpty()) scheduleLock("Aucun appareil de confiance détecté")
-        }, 6_000)
+            if (connected.isEmpty()) scheduleLock("Aucun appareil de confiance après redémarrage")
+        }, 60_000)
     }
 
     // ---------- Notification obligatoire d'un service permanent ----------

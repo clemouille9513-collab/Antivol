@@ -15,6 +15,6 @@ class BootReceiver : BroadcastReceiver() {
         if (Build.VERSION.SDK_INT >= 31 &&
             context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) return
-        context.startForegroundService(Intent(context, GuardService::class.java))
+        context.startForegroundService(Intent(context, GuardService::class.java).putExtra("boot", true))
     }
 }
