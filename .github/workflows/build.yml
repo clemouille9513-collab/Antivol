@@ -20,7 +20,9 @@ jobs:
         with:
           gradle-version: 8.7
       - name: Compiler
-        run: gradle assembleDebug --no-daemon
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon 2>&1 | tee build.log
       - uses: actions/upload-artifact@v4
         with:
           name: Antivol-apk
@@ -31,3 +33,12 @@ jobs:
         run: |
           gh release delete apk-dernier --yes --cleanup-tag || true
           gh release create apk-dernier app/build/outputs/apk/debug/app-debug.apk --title "Antivol APK" --notes "APK de test" --latest
+      - name: Rapport d'erreur
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          grep -E "^e: |error:|What went wrong" -A3 build.log | head -c 60000 > err.txt || true
+          [ -s err.txt ] || tail -c 20000 build.log > err.txt
+          gh release delete erreur-build --yes --cleanup-tag || true
+          gh release create erreur-build --prerelease --title "Erreur de compilation" --notes-file err.txt
