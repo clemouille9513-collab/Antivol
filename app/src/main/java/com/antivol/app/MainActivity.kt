@@ -132,6 +132,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 31) perms += Manifest.permission.BLUETOOTH_CONNECT
         if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
         perms += Manifest.permission.ACCESS_FINE_LOCATION
+        perms += Manifest.permission.CAMERA
         requestPermissions(perms.toTypedArray(), 1)
     }
 
@@ -374,10 +375,10 @@ private fun VerifyDialog(act: MainActivity, n: Int, onOk: () -> Unit, onCancel: 
         text = {
             OutlinedTextField(
                 value = value,
-                onValueChange = { value = it.filter(Char::isDigit).take(12) },
+                onValueChange = { value = it.take(40) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
             )
         },
         confirmButton = {
@@ -404,24 +405,24 @@ private fun AddCodeDialog(act: MainActivity, onDone: () -> Unit) {
         title = { Text("Nouveau code") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("4 à 12 chiffres", color = cDim, fontSize = 14.sp)
+                Text("6 à 40 caractères : lettres, chiffres et symboles", color = cDim, fontSize = 14.sp)
                 OutlinedTextField(
                     value = value,
-                    onValueChange = { value = it.filter(Char::isDigit).take(12) },
+                    onValueChange = { value = it.take(40) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
                 )
             }
         },
         confirmButton = {
             TextButton({
-                if (value.length in 4..12) {
+                if (value.length in 6..40) {
                     CodeStore.addCode(act, value)
                     act.toast("Code ${CodeStore.count(act)} enregistré")
                     onDone()
                 } else {
-                    act.toast("Le code doit faire entre 4 et 12 chiffres")
+                    act.toast("Le code doit faire entre 6 et 40 caractères")
                 }
             }) { Text("Ajouter") }
         },

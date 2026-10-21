@@ -33,7 +33,9 @@ object Crypto {
     fun topic(secret: String, kind: String): String =
         "antivol-" + sha("$secret:$kind").joinToString("") { "%02x".format(it) }.take(32)
 
-    fun encrypt(secret: String, plain: String): String {
+    fun encrypt(secret: String, plain: String): String = encryptBytes(secret, plain.toByteArray())
+
+    fun encryptBytes(secret: String, data: ByteArray): String {
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
@@ -41,7 +43,7 @@ object Crypto {
             SecretKeySpec(sha("$secret:enc"), "AES"),
             GCMParameterSpec(128, iv)
         )
-        return Base64.encodeToString(iv + cipher.doFinal(plain.toByteArray()), Base64.NO_WRAP)
+        return Base64.encodeToString(iv + cipher.doFinal(data), Base64.NO_WRAP)
     }
 
     fun decrypt(secret: String, b64: String): String? = try {

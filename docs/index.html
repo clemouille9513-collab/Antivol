@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0E14">
+<title>Antivol - Centre de contrôle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #0B0E14; --panel: #141923; --panel2: #1B2230; --line: #263044;
+    --text: #F2F5FA; --dim: #9AA7BD; --blue: #3D7BFF; --red: #FF3B4E; --green: #2ECC8F;
+    --orange: #FFA94D; --yellow: #F7D154; --purple: #B98AFF;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(110deg, #3a0813 0%, var(--bg) 45%, #0c2158 100%); position: sticky; top: 0; z-index: 1000; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; letter-spacing: .2px; }
+  .logo svg { width: 28px; height: 28px; }
+  .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line); font-size: 13px; color: var(--dim); white-space: nowrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+  .dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.bad { background: var(--red); }
+  .btn-ghost { background: var(--panel); border: 1px solid var(--line); padding: 8px 14px; border-radius: 10px; }
+  .btn-ghost:hover { border-color: var(--blue); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); gap: 16px; padding: 16px 20px 40px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 14px 40px; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 12px; font-size: 12px; letter-spacing: 1.3px; color: var(--dim); font-weight: 600; text-transform: uppercase; }
+
+  #mapwrap { position: relative; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); }
+  #map { height: 62vh; min-height: 360px; background: #0f1420; }
+  .mapbtns { position: absolute; right: 12px; top: 12px; z-index: 500; display: flex; flex-direction: column; gap: 8px; }
+  .mapbtns button { background: rgba(20,25,35,.92); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+  .mapbtns button:hover { border-color: var(--blue); }
+  .maplabel { position: absolute; left: 12px; bottom: 12px; z-index: 500; background: rgba(20,25,35,.92);
+    border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 13px; max-width: calc(100% - 24px); }
+
+  .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat { background: var(--panel2); border-radius: 14px; padding: 12px; }
+  .stat .k { font-size: 12px; color: var(--dim); }
+  .stat .v { font-size: 20px; font-weight: 700; margin-top: 4px; }
+  .v.red { color: var(--red); } .v.green { color: var(--green); } .v.orange { color: var(--orange); }
+
+  .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .act { background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; padding: 14px 10px; font-weight: 600; text-align: center; }
+  .act:hover { border-color: var(--blue); }
+  .act small { display: block; font-weight: 400; color: var(--dim); margin-top: 2px; font-size: 12px; }
+  .act.danger { grid-column: 1 / -1; background: linear-gradient(110deg, #b3001b, #ff3b4e); border: 0; font-size: 18px; padding: 18px; color: #fff; }
+  .act.danger small { color: #ffd5da; }
+  .act.free { border-color: var(--green); color: var(--green); }
+
+  .say { display: flex; gap: 8px; margin-top: 12px; }
+  input[type=text], input[type=password], textarea { width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 12px; padding: 12px; font: inherit; }
+  input:focus { outline: 2px solid var(--blue); outline-offset: 0; }
+  .primary { background: var(--blue); border: 0; border-radius: 12px; padding: 0 18px; font-weight: 600; color: #fff; white-space: nowrap; }
+
+  #log { display: flex; flex-direction: column; max-height: 360px; overflow: auto; }
+  .ev { display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--line); align-items: start; }
+  .ev:last-child { border-bottom: 0; }
+  .ev i { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--dim); }
+  .ev span { font-size: 14px; overflow-wrap: anywhere; }
+  .ev time { color: var(--dim); font-size: 12px; white-space: nowrap; }
+  .empty { color: var(--dim); font-size: 14px; padding: 6px 0; }
+
+  #photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .ph { background: var(--panel2); border-radius: 12px; overflow: hidden; }
+  .ph img { width: 100%; display: block; aspect-ratio: 3 / 4; object-fit: cover; cursor: zoom-in; }
+  .ph div { padding: 6px 8px; font-size: 12px; color: var(--dim); }
+
+  .modal { position: fixed; inset: 0; z-index: 2000; background: rgba(5,7,12,.8); display: none; align-items: center; justify-content: center; padding: 16px; }
+  .modal.show { display: flex; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 22px; width: 100%; max-width: 420px; }
+  .box h3 { margin: 0 0 8px; font-size: 20px; }
+  .box p { color: var(--dim); margin: 0 0 14px; line-height: 1.45; }
+  .row { display: flex; gap: 10px; margin-top: 14px; }
+  .row button { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel2); font-weight: 600; }
+  .row .go { background: var(--red); border: 0; color: #fff; }
+  .row .ok { background: var(--blue); border: 0; color: #fff; }
+  #big { display: none; position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,.92); align-items: center; justify-content: center; }
+  #big img { max-width: 96vw; max-height: 92vh; border-radius: 12px; }
+  #toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--panel2);
+    border: 1px solid var(--line); padding: 12px 18px; border-radius: 12px; z-index: 4000; display: none; max-width: 90vw; }
+  .leaflet-container { font-family: inherit; }
+  .pulse { animation: pulse 1.8s ease-out infinite; }
+  @keyframes pulse { 0% { opacity: 1; } 100% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3b4e"/><stop offset="1" stop-color="#3d7bff"/></linearGradient></defs>
+      <path d="M12 2l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V5l8-3z" fill="url(#g)"/><path d="M8.5 12l2.5 2.5L16 9.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Antivol
+  </div>
+  <div class="spacer"></div>
+  <span class="pill"><span class="dot" id="netdot"></span><span id="nettext">Connexion…</span></span>
+  <button class="btn-ghost" id="keybtn">Clé</button>
+</header>
+
+<main>
+  <div class="col">
+    <div id="mapwrap">
+      <div id="map"></div>
+      <div class="mapbtns">
+        <button id="centerBtn">Dernière position</button>
+        <button id="fitBtn">Tout le trajet</button>
+        <button id="mapsBtn">Ouvrir dans Maps</button>
+      </div>
+      <div class="maplabel" id="maplabel">Aucune position reçue. Appuie sur « Localiser ».</div>
+    </div>
+    <div class="card">
+      <h2>Journal</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>État du S22</h2>
+      <div class="stats">
+        <div class="stat"><div class="k">Verrouillage</div><div class="v" id="sLock">?</div></div>
+        <div class="stat"><div class="k">Mode volé</div><div class="v" id="sStolen">?</div></div>
+        <div class="stat"><div class="k">Batterie</div><div class="v" id="sBatt">?</div></div>
+        <div class="stat"><div class="k">Dernier signe de vie</div><div class="v" id="sSeen" style="font-size:16px">jamais</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Actions</h2>
+      <div class="actions">
+        <button class="act danger" id="aStolen">VOLÉ<small>Verrouille, voix en boucle, écran en éco</small></button>
+        <button class="act" data-cmd="lock">Verrouiller<small>Écran de blocage</small></button>
+        <button class="act" data-cmd="alarm">Alarme<small>Sirène au maximum</small></button>
+        <button class="act" data-cmd="locate">Localiser<small>Position maintenant</small></button>
+        <button class="act" data-cmd="photo" data-arg="front">Photo avant<small>Caméra selfie</small></button>
+        <button class="act" data-cmd="photo" data-arg="back">Photo arrière<small>Caméra principale</small></button>
+        <button class="act free" data-cmd="free">Libérer<small>Arrête tout</small></button>
+      </div>
+      <div class="say">
+        <input type="text" id="sayText" placeholder="Phrase à dire à voix haute sur le S22" maxlength="200">
+        <button class="primary" id="sayBtn">Parler</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Photos</h2>
+      <div id="photos"></div>
+    </div>
+  </div>
+</main>
+
+<div class="modal" id="keyModal">
+  <div class="box">
+    <h3>Clé de liaison</h3>
+    <p>Dans l'appli Antivol du S22, ouvre « Clé de liaison » et recopie les 12 caractères ici. La clé reste sur cet appareil et chiffre tous les messages.</p>
+    <input type="text" id="keyInput" placeholder="XXXX-XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <div class="row"><button id="keyCancel">Annuler</button><button class="ok" id="keySave">Enregistrer</button></div>
+  </div>
+</div>
+<div class="modal" id="stolenModal">
+  <div class="box">
+    <h3>Déclarer le téléphone volé ?</h3>
+    <p>Le S22 se verrouille, l'écran passe au plus bas, il répète à voix haute qu'il a été volé et envoie sa position toutes les 3 minutes. Seuls tes codes ou le bouton « Libérer » l'arrêtent.</p>
+    <div class="row"><button id="stolenNo">Annuler</button><button class="go" id="stolenYes">Oui, il est volé</button></div>
+  </div>
+</div>
+<div id="big"><img alt="Photo agrandie"></div>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (s) { return document.querySelector(s); };
+  var enc = new TextEncoder(), dec = new TextDecoder();
+  var secret = "";
+  try { secret = localStorage.getItem("antivol_secret") || ""; } catch (e) {}
+
+  // ---------- Stockage local ----------
+  function load(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  var positions = load("antivol_pos", []);
+  var events = load("antivol_evt", []);
+  var photos = load("antivol_photos", []);
+  var status = load("antivol_status", { locked: null, stolen: null, batt: null, seen: 0 });
+
+  // ---------- Chiffrement (identique à l'appli Android) ----------
+  async function sha(s) { return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(s))); }
+  function hex(u) { return Array.prototype.map.call(u, function (b) { return b.toString(16).padStart(2, "0"); }).join(""); }
+  async function topic(kind) { return "antivol-" + hex(await sha(secret + ":" + kind)).slice(0, 32); }
+  async function aesKey() { return crypto.subtle.importKey("raw", await sha(secret + ":enc"), "AES-GCM", false, ["encrypt", "decrypt"]); }
+  function b64ToU8(b) { var s = atob(b.trim()), u = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+  function u8ToB64(u) { var s = ""; for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); }
+  async function decryptBytes(b64) {
+    var raw = b64ToU8(b64);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, await aesKey(), raw.slice(12)));
+  }
+  async function decryptText(b64) { try { return dec.decode(await decryptBytes(b64)); } catch (e) { return null; } }
+  async function encryptText(t) {
+    var iv = crypto.getRandomValues(new Uint8Array(12));
+    var ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, await aesKey(), enc.encode(t)));
+    var out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
+    return u8ToB64(out);
+  }
+  function normalizeKey(s) { return s.toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+  function prettyKey(s) { return s.replace(/(.{4})(?=.)/g, "$1-"); }
+
+  // ---------- Utilitaires ----------
+  function toast(t) { var el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(function () { el.style.display = "none"; }, 3500); }
+  function fmtTime(ts) { return new Date(ts * 1000).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+  function ago(ts) {
+    if (!ts) return "jamais";
+    var s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (s < 60) return "il y a " + s + " s";
+    if (s < 3600) return "il y a " + Math.floor(s / 60) + " min";
+    if (s < 86400) return "il y a " + Math.floor(s / 3600) + " h";
+    return "il y a " + Math.floor(s / 86400) + " j";
+  }
+  var COLORS = { locked: "var(--red)", stolen: "var(--red)", admin: "var(--red)", wrong: "var(--orange)", sim: "var(--orange)", airplane: "var(--orange)",
+    battery: "var(--yellow)", shutdown: "var(--yellow)", bluetooth: "var(--blue)", photo: "var(--purple)", unlocked: "var(--green)", service: "var(--dim)" };
+
+  // ---------- Carte ----------
+  var map = L.map("map", { zoomControl: true }).setView([46.6, 2.4], 5);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    maxZoom: 19, attribution: "&copy; OpenStreetMap &copy; CARTO"
+  }).addTo(map);
+  var trackLayer = L.layerGroup().addTo(map);
+  var line = null, lastMarker = null;
+
+  function drawMap(fit) {
+    trackLayer.clearLayers();
+    if (!positions.length) return;
+    var pts = positions.map(function (p) { return [p.lat, p.lon]; });
+    line = L.polyline(pts, { color: "#3D7BFF", weight: 4, opacity: .9 }).addTo(trackLayer);
+    positions.forEach(function (p) {
+      L.circleMarker([p.lat, p.lon], { radius: 4, color: "#90CAF9", fillColor: "#90CAF9", fillOpacity: 1, weight: 1 })
+        .bindTooltip(fmtTime(p.ts) + " (±" + p.acc + " m)").addTo(trackLayer);
+    });
+    var last = positions[positions.length - 1];
+    L.circle([last.lat, last.lon], { radius: Math.max(last.acc, 10), color: "#FF3B4E", fillColor: "#FF3B4E", fillOpacity: .15, weight: 1 }).addTo(trackLayer);
+    lastMarker = L.circleMarker([last.lat, last.lon], { radius: 10, color: "#fff", weight: 2, fillColor: "#FF3B4E", fillOpacity: 1, className: "pulse" }).addTo(trackLayer);
+    $("#maplabel").textContent = "Dernière position : " + fmtTime(last.ts) + " (" + ago(last.ts) + "), précision " + last.acc + " m. " + positions.length + " point(s) enregistré(s).";
+    if (fit) map.setView([last.lat, last.lon], 16);
+  }
+  $("#centerBtn").onclick = function () { var l = positions[positions.length - 1]; if (l) map.setView([l.lat, l.lon], 17); else toast("Aucune position reçue."); };
+  $("#fitBtn").onclick = function () { if (line && positions.length > 1) map.fitBounds(line.getBounds(), { padding: [30, 30] }); else $("#centerBtn").onclick(); };
+  $("#mapsBtn").onclick = function () {
+    var l = positions[positions.length - 1];
+    if (!l) { toast("Aucune position reçue."); return; }
+    window.open("https://www.google.com/maps?q=" + l.lat + "," + l.lon, "_blank", "noopener");
+  };
+
+  // ---------- Affichage ----------
+  function renderStatus() {
+    var lk = $("#sLock"), st = $("#sStolen"), bt = $("#sBatt");
+    lk.textContent = status.locked === null ? "?" : status.locked ? "Verrouillé" : "Libre";
+    lk.className = "v " + (status.locked ? "red" : status.locked === false ? "green" : "");
+    st.textContent = status.stolen === null ? "?" : status.stolen ? "ACTIF" : "Non";
+    st.className = "v " + (status.stolen ? "red" : status.stolen === false ? "green" : "");
+    bt.textContent = status.batt === null ? "?" : status.batt + " %";
+    bt.className = "v " + (status.batt !== null && status.batt < 15 ? "orange" : "");
+    $("#sSeen").textContent = ago(status.seen);
+  }
+  function renderLog() {
+    var el = $("#log");
+    if (!events.length) { el.innerHTML = '<div class="empty">Aucun événement pour l\'instant.</div>'; return; }
+    el.innerHTML = "";
+    events.slice().reverse().slice(0, 150).forEach(function (e) {
+      var d = document.createElement("div"); d.className = "ev";
+      var i = document.createElement("i"); i.style.background = COLORS[e.type] || "var(--dim)";
+      var s = document.createElement("span"); s.textContent = e.detail;
+      var t = document.createElement("time"); t.textContent = fmtTime(e.ts);
+      d.appendChild(i); d.appendChild(s); d.appendChild(t); el.appendChild(d);
+    });
+  }
+  function renderPhotos() {
+    var el = $("#photos");
+    if (!photos.length) { el.innerHTML = '<div class="empty">Aucune photo reçue.</div>'; return; }
+    el.innerHTML = "";
+    photos.slice().reverse().forEach(function (p) {
+      var d = document.createElement("div"); d.className = "ph";
+      var img = document.createElement("img"); img.src = p.data; img.alt = "Photo du S22";
+      img.onclick = function () { $("#big img").src = p.data; $("#big").style.display = "flex"; };
+      var c = document.createElement("div"); c.textContent = (p.facing === "front" ? "Avant" : "Arrière") + " · " + fmtTime(p.ts);
+      d.appendChild(img); d.appendChild(c); el.appendChild(d);
+    });
+  }
+  $("#big").onclick = function () { this.style.display = "none"; };
+
+  // ---------- Réception ----------
+  var assembling = {};
+  function touch(ts) { if (ts > status.seen) status.seen = ts; }
+
+  async function handle(body) {
+    var plain = await decryptText(body);
+    if (!plain) return;
+    var p = plain.split("|");
+    var ts = parseInt(p[0], 10);
+    if (!ts || p.length < 2) return;
+    var type = p[1], changed = false;
+
+    if (type === "loc" && p.length >= 5) {
+      var lat = parseFloat(p[2]), lon = parseFloat(p[3]), acc = parseInt(p[4], 10) || 0;
+      if (!positions.some(function (x) { return x.ts === ts; })) {
+        positions.push({ ts: ts, lat: lat, lon: lon, acc: acc });
+        positions.sort(function (a, b) { return a.ts - b.ts; });
+        positions = positions.slice(-500); save("antivol_pos", positions);
+        drawMap(positions[positions.length - 1].ts === ts && Date.now() / 1000 - ts < 600);
+      }
+      touch(ts); changed = true;
+    } else if (type === "ack" && p.length >= 6) {
+      if (ts >= (status.ackTs || 0)) {
+        status.ackTs = ts; status.locked = p[3] === "1"; status.stolen = p[4] === "1"; status.batt = parseInt(p[5], 10);
+      }
+      touch(ts); changed = true;
+    } else if (type === "evt" && p.length >= 4) {
+      var et = p[2], detail = p.slice(3).join("|");
+      if (!events.some(function (x) { return x.ts === ts && x.type === et && x.detail === detail; })) {
+        events.push({ ts: ts, type: et, detail: detail });
+        events.sort(function (a, b) { return a.ts - b.ts; });
+        events = events.slice(-300); save("antivol_evt", events); renderLog();
+      }
+      if (et === "locked") status.locked = true;
+      if (et === "stolen") status.stolen = true;
+      if (et === "unlocked") { status.locked = false; status.stolen = false; }
+      touch(ts); changed = true;
+    } else if (type === "photo" && p.length >= 7) {
+      var id = p[2], idx = parseInt(p[3], 10), n = parseInt(p[4], 10), facing = p[5], chunk = p.slice(6).join("|");
+      if (photos.some(function (x) { return x.id === id; })) return;
+      var a = assembling[id] || (assembling[id] = { n: n, facing: facing, parts: {} });
+      a.parts[idx] = chunk;
+      if (Object.keys(a.parts).length === a.n) {
+        var all = ""; for (var i = 0; i < a.n; i++) all += a.parts[i];
+        try {
+          var bytes = await decryptBytes(all);
+          var blob = new Blob([bytes], { type: "image/jpeg" });
+          var data = await new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.readAsDataURL(blob); });
+          photos.push({ id: id, ts: parseInt(id, 10), facing: facing, data: data });
+          photos = photos.slice(-12); save("antivol_photos", photos); renderPhotos();
+          toast("Nouvelle photo reçue");
+        } catch (e) {}
+        delete assembling[id];
+      }
+      touch(ts); changed = true;
+    }
+    if (changed) { save("antivol_status", status); renderStatus(); }
+  }
+
+  var es = null;
+  async function connect() {
+    if (es) { es.close(); es = null; }
+    if (!secret) { setNet(false, "Clé manquante"); return; }
+    var t = await topic("rep");
+    es = new EventSource("https://ntfy.sh/" + t + "/sse?since=12h");
+    es.addEventListener("open", function () { setNet(true, "En ligne"); });
+    es.addEventListener("error", function () { setNet(false, "Reconnexion…"); });
+    es.addEventListener("message", function (e) {
+      try { var o = JSON.parse(e.data); if (o.message) handle(o.message); } catch (x) {}
+    });
+  }
+  function setNet(ok, text) { $("#netdot").className = "dot " + (ok ? "ok" : "bad"); $("#nettext").textContent = text; }
+
+  // ---------- Envoi des ordres ----------
+  async function send(cmd, arg) {
+    if (!secret) { openKey(); return; }
+    var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + (arg || "");
+    try {
+      var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: await encryptText(plain) });
+      toast(r.ok ? "Ordre « " + cmd + " » envoyé au S22" : "Envoi refusé (" + r.status + ")");
+    } catch (e) { toast("Envoi impossible : pas de connexion"); }
+  }
+  document.querySelectorAll(".act[data-cmd]").forEach(function (b) {
+    b.addEventListener("click", function () { send(b.dataset.cmd, b.dataset.arg || ""); });
+  });
+  $("#sayBtn").onclick = function () { var t = $("#sayText").value.trim(); if (t) { send("say", t); $("#sayText").value = ""; } };
+  $("#sayText").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#sayBtn").click(); });
+  $("#aStolen").onclick = function () { $("#stolenModal").classList.add("show"); };
+  $("#stolenNo").onclick = function () { $("#stolenModal").classList.remove("show"); };
+  $("#stolenYes").onclick = function () { $("#stolenModal").classList.remove("show"); send("stolen", ""); };
+
+  // ---------- Clé ----------
+  function openKey() { $("#keyInput").value = secret ? prettyKey(secret) : ""; $("#keyModal").classList.add("show"); setTimeout(function () { $("#keyInput").focus(); }, 50); }
+  $("#keybtn").onclick = openKey;
+  $("#keyCancel").onclick = function () { $("#keyModal").classList.remove("show"); };
+  $("#keySave").onclick = function () {
+    var k = normalizeKey($("#keyInput").value);
+    if (k.length !== 12) { toast("La clé fait 12 caractères"); return; }
+    if (k !== secret) {
+      secret = k;
+      try { localStorage.setItem("antivol_secret", k); } catch (e) {}
+      positions = []; events = []; photos = []; status = { locked: null, stolen: null, batt: null, seen: 0 };
+      save("antivol_pos", positions); save("antivol_evt", events); save("antivol_photos", photos); save("antivol_status", status);
+      drawMap(false); renderLog(); renderPhotos(); renderStatus();
+    }
+    $("#keyModal").classList.remove("show");
+    connect();
+  };
+
+  // ---------- Démarrage ----------
+  drawMap(true); renderLog(); renderPhotos(); renderStatus();
+  setInterval(renderStatus, 30000);
+  if (!secret) openKey(); else connect();
+})();
+</script>
+</body>
+</html>
