@@ -53,6 +53,10 @@ object Prefs {
         sp(c).edit().putString("history", n.joinToString(";")).apply()
     }
 
+    /** Détection des regards indiscrets (caméra avant, toutes les 30 secondes). */
+    fun isPeekEnabled(c: Context) = sp(c).getBoolean("peek", true)
+    fun setPeekEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("peek", v).apply()
+
     /** Secondes d'attente avant de verrouiller quand l'appareil disparaît. */
     fun graceSeconds(c: Context) = sp(c).getInt("grace", 30)
 }

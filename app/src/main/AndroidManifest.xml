@@ -18,6 +18,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="false"
@@ -36,7 +39,7 @@
         <service
             android:name=".GuardService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|location" />
+            android:foregroundServiceType="connectedDevice|location|camera" />
 
         <activity
             android:name=".RemoteActivity"

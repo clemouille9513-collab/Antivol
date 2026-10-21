@@ -18,7 +18,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.app.KeyguardManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
+import android.media.FaceDetector
+import android.os.PowerManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -51,6 +56,17 @@ class GuardService : Service() {
     private var pendingReason = "Appareil de confiance perdu"
     private var eco = false
     private var simAbsent = false
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var peekOverlay: PeekOverlay? = null
+    private var peekBusy = false
+    private var peekPausedUntil = 0L
+
+    private val peekRunnable = object : Runnable {
+        override fun run() {
+            try { scanForPeekers() } catch (_: Exception) { peekBusy = false }
+            handler.postDelayed(this, 30_000)
+        }
+    }
 
     private val lockRunnable = Runnable { triggerLock(pendingReason) }
 
@@ -143,6 +159,19 @@ class GuardService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
 
+        // Garde le processeur éveillé pour que la connexion à la télécommande reste ouverte écran éteint.
+        if (wakeLock == null) {
+            val pm = getSystemService(PowerManager::class.java)
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "antivol:garde").apply {
+                setReferenceCounted(false)
+                try { acquire() } catch (_: Exception) {}
+            }
+        }
+
+        // Détection des regards : une photo avant toutes les 30 secondes quand l'écran est allumé.
+        handler.removeCallbacks(peekRunnable)
+        handler.postDelayed(peekRunnable, 30_000)
+
         if (!registered) {
             val filter = IntentFilter().apply {
                 addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
@@ -203,6 +232,10 @@ class GuardService : Service() {
         }
         overlay?.hide()
         overlay = null
+        peekOverlay?.hide()
+        peekOverlay = null
+        try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
+        wakeLock = null
         super.onDestroy()
     }
 
@@ -228,7 +261,7 @@ class GuardService : Service() {
 
         handler.post {
             when (cmd) {
-                "lock" -> triggerLock("Ordre de la télécommande")
+                "lock" -> triggerLock("Ordre de la télécommande", force = true)
                 "stolen" -> startStolen()
                 "alarm" -> stolen().start(siren = true, withSpeech = false)
                 "say" -> stolen().say(arg)
@@ -356,6 +389,55 @@ class GuardService : Service() {
         }
     }
 
+    // ---------- Regards indiscrets ----------
+
+    private fun scanForPeekers() {
+        if (!Prefs.isPeekEnabled(this) || peekBusy) return
+        if (System.currentTimeMillis() < peekPausedUntil) return
+        if (Prefs.isLocked(this) || Prefs.isStolen(this)) return
+        if (peekOverlay?.isShown == true) return
+        if (!Settings.canDrawOverlays(this)) return
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return
+        // Seulement quand quelqu'un utilise vraiment le téléphone : écran allumé et déverrouillé.
+        if (!getSystemService(PowerManager::class.java).isInteractive) return
+        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) return
+
+        peekBusy = true
+        PhotoCapture(this).capture(true, 640) { bytes ->
+            val faces = if (bytes == null) 0 else countFaces(bytes)
+            handler.post {
+                peekBusy = false
+                if (faces >= 2) showPeekOverlay(faces)
+            }
+        }
+    }
+
+    /** Compte les visages d'une photo JPEG (détecteur intégré à Android, jusqu'à 5). */
+    private fun countFaces(jpeg: ByteArray): Int = try {
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+        val src = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
+        if (src == null) 0 else {
+            // Le détecteur exige une largeur paire.
+            val w = src.width - (src.width % 2)
+            val bmp = if (w == src.width) src else Bitmap.createBitmap(src, 0, 0, w, src.height)
+            val found = arrayOfNulls<FaceDetector.Face>(5)
+            FaceDetector(bmp.width, bmp.height, found.size).findFaces(bmp, found)
+                .let { n -> found.take(n).count { it != null && it.confidence() > 0.4f } }
+        }
+    } catch (_: Exception) { 0 }
+
+    private fun showPeekOverlay(faces: Int) {
+        if (peekOverlay?.isShown == true || Prefs.isLocked(this)) return
+        event("peek", "$faces visages devant l'écran")
+        val o = PeekOverlay(this) {
+            peekOverlay = null
+            // Après « Déverrouiller », on laisse une minute de tranquillité.
+            peekPausedUntil = System.currentTimeMillis() + 60_000
+        }
+        peekOverlay = o
+        try { o.show() } catch (_: Exception) { peekOverlay = null }
+    }
+
     // ---------- Logique de verrouillage ----------
 
     private fun scheduleLock(reason: String) {
@@ -365,14 +447,19 @@ class GuardService : Service() {
         handler.postDelayed(lockRunnable, Prefs.graceSeconds(this) * 1000L)
     }
 
-    private fun triggerLock(reason: String) {
-        if (Prefs.isLocked(this)) return
+    private fun triggerLock(reason: String, force: Boolean = false) {
+        // Un ordre de la télécommande verrouille toujours l'écran, même si on l'était déjà.
+        if (Prefs.isLocked(this) && !force) return
         Prefs.setLocked(this, true)
         event("locked", "Verrouillé : $reason")
+        peekOverlay?.hide()
+        peekOverlay = null
         showOverlay()
         val dpm = getSystemService(DevicePolicyManager::class.java)
         if (dpm.isAdminActive(ComponentName(this, AdminReceiver::class.java))) {
             dpm.lockNow()
+        } else {
+            event("admin", "Verrouillage impossible : l'administrateur n'est pas activé")
         }
         handler.removeCallbacks(locRunnable)
         handler.postDelayed(locRunnable, 5_000)
@@ -464,7 +551,14 @@ class GuardService : Service() {
             if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                 type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             }
-            startForeground(1, notification, type)
+            val withCamera = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            val cameraOk = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            try {
+                startForeground(1, notification, if (cameraOk) withCamera else type)
+            } catch (_: Exception) {
+                // Démarrage depuis le redémarrage du téléphone : Android refuse la caméra, on s'en passe.
+                startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            }
         } else {
             startForeground(1, notification)
         }

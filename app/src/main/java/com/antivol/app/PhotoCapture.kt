@@ -26,7 +26,7 @@ import java.io.ByteArrayOutputStream
 class PhotoCapture(private val ctx: Context) {
 
     @SuppressLint("MissingPermission")
-    fun capture(front: Boolean, onResult: (ByteArray?) -> Unit) {
+    fun capture(front: Boolean, width: Int = 480, onResult: (ByteArray?) -> Unit) {
         if (ctx.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             onResult(null); return
         }
@@ -64,7 +64,7 @@ class PhotoCapture(private val ctx: Context) {
                     val raw = ByteArray(buf.remaining())
                     buf.get(raw)
                     img.close()
-                    finish(shrink(raw, sensor))
+                    finish(shrink(raw, sensor, width))
                 }
             } catch (_: Exception) { finish(null) }
         }, h)
@@ -108,9 +108,9 @@ class PhotoCapture(private val ctx: Context) {
         h.postDelayed({ finish(null) }, 8000)
     }
 
-    private fun shrink(raw: ByteArray, rotation: Int): ByteArray {
+    private fun shrink(raw: ByteArray, rotation: Int, width: Int): ByteArray {
         val src = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return raw
-        val w = 480
+        val w = width
         val h = (src.height * (w.toFloat() / src.width)).toInt()
         val scaled = Bitmap.createScaledBitmap(src, w, h, true)
         val m = Matrix().apply { postRotate(rotation.toFloat()) }

@@ -35,6 +35,7 @@ object Ntfy {
     ) {
         @Volatile private var running = true
         @Volatile private var conn: HttpURLConnection? = null
+        @Volatile private var lastTime = 0L
         private val seen = ArrayDeque<String>()
         private val thread = Thread { loop() }
 
@@ -53,7 +54,9 @@ object Ntfy {
             var first = true
             while (running) {
                 try {
-                    val from = if (first) since else "2m"
+                    // Après une coupure, on reprend juste avant le dernier message reçu :
+                    // aucun ordre n'est perdu (les doublons sont écartés avec l'identifiant).
+                    val from = if (first || lastTime == 0L) since else (lastTime - 5).toString()
                     val c = URL("$BASE$topic/json?since=$from").openConnection() as HttpURLConnection
                     c.connectTimeout = 15000
                     c.readTimeout = 120000
@@ -64,11 +67,13 @@ object Ntfy {
                             val line = r.readLine() ?: break
                             val o = JSONObject(line)
                             if (o.optString("event") != "message") continue
+                            val t = o.optLong("time", 0L)
+                            if (t > lastTime) lastTime = t
                             val id = o.optString("id")
                             if (id in seen) continue
                             seen.addLast(id)
                             if (seen.size > 200) seen.removeFirst()
-                            onMessage(o.optString("message"))
+                            try { onMessage(o.optString("message")) } catch (_: Exception) {}
                         }
                     }
                 } catch (_: Exception) {

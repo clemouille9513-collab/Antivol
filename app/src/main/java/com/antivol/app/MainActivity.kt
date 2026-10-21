@@ -11,6 +11,7 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -44,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -140,6 +142,16 @@ class MainActivity : ComponentActivity() {
         toast("Ouvre Autorisations, puis Position, puis « Toujours autoriser »")
         startActivity(
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        )
+    }
+
+    fun batteryUnrestricted() =
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    @SuppressLint("BatteryLife")
+    fun askBatteryUnrestricted() {
+        startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
         )
     }
 
@@ -261,6 +273,8 @@ private fun Home(act: MainActivity, tick: Int) {
                     "Autorisations de base", "Autoriser") { act.askPermissions() }
                 StepRow(act.bgLocGranted(), "Position « tout le temps »",
                     "Pour te localiser écran éteint", "Régler") { act.askAlwaysLocation() }
+                StepRow(act.batteryUnrestricted(), "Batterie sans restriction",
+                    "Pour que la télécommande marche écran éteint", "Autoriser") { act.askBatteryUnrestricted() }
                 StepRow(trusted > 0, "Appareils de confiance",
                     if (trusted > 0) "$trusted choisi(s)" else "Montre, AirPods...", "Choisir") {
                     verifyThen { dlg = Dlg.Devices }
@@ -278,6 +292,24 @@ private fun Home(act: MainActivity, tick: Int) {
                 TextButton(onClick = {
                     verifyThen { CodeStore.clearCodes(act); local++ }
                 }) { Text("Effacer tous les codes", color = cRed) }
+            }
+
+            Section("REGARDS INDISCRETS")
+            AppCard {
+                var peek by remember { mutableStateOf(Prefs.isPeekEnabled(act)) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Détecter les curieux", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                        Text(
+                            "La caméra avant regarde toutes les 30 secondes. Si plusieurs visages sont devant l'écran, il se cache.",
+                            color = cDim, fontSize = 13.sp
+                        )
+                    }
+                    Switch(checked = peek, onCheckedChange = {
+                        peek = it
+                        Prefs.setPeekEnabled(act, it)
+                    })
+                }
             }
 
             Section("TÉLÉCOMMANDE")

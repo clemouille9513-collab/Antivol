@@ -144,16 +144,21 @@ class RemoteActivity : ComponentActivity() {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilledTonalButton(
+                        onClick = { send("status", "") },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Batterie") }
+                    FilledTonalButton(
                         onClick = { send("locate", "") },
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Localiser") }
-                    FilledTonalButton(
-                        onClick = { send("free", "") },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        shape = RoundedCornerShape(14.dp)
-                    ) { Text("Libérer") }
                 }
+                FilledTonalButton(
+                    onClick = { send("free", "") },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp)
+                ) { Text("Libérer") }
 
                 AppCard {
                     Text("Faire parler le S22", fontWeight = FontWeight.SemiBold)
