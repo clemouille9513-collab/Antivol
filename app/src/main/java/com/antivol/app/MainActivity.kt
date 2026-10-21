@@ -2,274 +2,472 @@ package com.antivol.app
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Activity
-import android.app.AlertDialog
 import android.app.admin.DevicePolicyManager
 import android.bluetooth.BluetoothManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.text.InputType
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
-    private lateinit var status: TextView
-    private lateinit var container: LinearLayout
-    private lateinit var toggleButton: Button
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
-    private fun admin() = ComponentName(this, AdminReceiver::class.java)
+    private var tick by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(32), dp(16), dp(32))
-        }
-        setContentView(ScrollView(this).apply { addView(container) })
-
-        container.addView(TextView(this).apply {
-            text = "Antivol"
-            textSize = 28f
-        })
-        status = TextView(this).apply {
-            textSize = 15f
-            setPadding(0, dp(12), 0, dp(12))
-        }
-        container.addView(status)
-
-        addButton("1. Activer l'administrateur de l'appareil") {
-            startActivity(
-                Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
-                    .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin())
-                    .putExtra(
-                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Nécessaire pour verrouiller l'écran quand ta montre s'éloigne."
-                    )
-            )
-        }
-        addButton("2. Autoriser l'affichage par-dessus les autres applis") {
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-            )
-        }
-        addButton("3. Autoriser le Bluetooth et les notifications") {
-            val perms = mutableListOf<String>()
-            if (Build.VERSION.SDK_INT >= 31) perms += Manifest.permission.BLUETOOTH_CONNECT
-            if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
-            perms += Manifest.permission.ACCESS_FINE_LOCATION
-            if (perms.isNotEmpty()) requestPermissions(perms.toTypedArray(), 1)
-        }
-        addButton("4. Choisir les appareils de confiance (montre, AirPods...)") {
-            verifyThen { chooseDevices() }
-        }
-        addButton("Position : autoriser « tout le temps »") {
-            toast("Ouvre Autorisations, puis Position, puis « Toujours autoriser »")
-            startActivity(
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-            )
-        }
-        addButton("Clé de liaison pour la télécommande") { verifyThen { showKey() } }
-        addButton("Utiliser ce téléphone comme télécommande") {
-            startActivity(Intent(this, RemoteActivity::class.java))
-        }
-        addButton("5. Ajouter un code") { verifyThen { addCodeDialog() } }
-        addButton("Effacer tous les codes") {
-            verifyThen {
-                CodeStore.clearCodes(this)
-                refresh()
-            }
-        }
-        addButton("6. Générer des codes de secours") {
-            verifyThen { showRecoveryCodes() }
-        }
-        toggleButton = addButton("7. Activer la protection") { toggleProtection() }
-        addButton("Tester (verrouillage dans 10 secondes)") { testLock() }
+        window.setBackgroundDrawable(ColorDrawable(0xFF0B0E14.toInt()))
+        setContent { AntivolTheme { Home(this, tick) } }
     }
 
     override fun onResume() {
         super.onResume()
-        refresh()
+        tick++
     }
 
-    private fun addButton(label: String, onClick: () -> Unit): Button {
-        val b = Button(this).apply {
-            text = label
-            isAllCaps = false
-            setOnClickListener { onClick() }
-        }
-        container.addView(b)
-        return b
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        tick++
     }
 
     // ---------- État ----------
 
-    private fun adminActive() =
-        getSystemService(DevicePolicyManager::class.java).isAdminActive(admin())
+    fun admin() = ComponentName(this, AdminReceiver::class.java)
 
-    private fun btGranted() = Build.VERSION.SDK_INT < 31 ||
+    fun adminActive() = getSystemService(DevicePolicyManager::class.java).isAdminActive(admin())
+
+    fun btGranted() = Build.VERSION.SDK_INT < 31 ||
         checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
-    private fun mark(ok: Boolean) = if (ok) "✔" else "✘"
+    fun locGranted() =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-    private fun refresh() {
-        val trusted = Prefs.trustedDevices(this).size
-        val codes = CodeStore.count(this)
-        val recovery = CodeStore.recoveryCount(this)
-        status.text = buildString {
-            appendLine("${mark(adminActive())} Administrateur de l'appareil")
-            appendLine("${mark(Settings.canDrawOverlays(this@MainActivity))} Affichage par-dessus les applis")
-            appendLine("${mark(btGranted())} Bluetooth autorisé")
-            appendLine("${mark(trusted > 0)} Appareils de confiance : $trusted")
-            appendLine("${mark(codes > 0)} Codes enregistrés : $codes")
-            appendLine("${mark(recovery > 0)} Codes de secours restants : $recovery")
-            append("${mark(Prefs.isEnabled(this@MainActivity))} Protection active")
-        }
-        toggleButton.text =
-            if (Prefs.isEnabled(this)) "7. Désactiver la protection" else "7. Activer la protection"
-    }
+    fun bgLocGranted() = Build.VERSION.SDK_INT < 29 ||
+        checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-    // ---------- Demande des codes avant une action sensible ----------
-
-    private fun passwordField() = EditText(this).apply {
-        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-    }
-
-    /** Si des codes existent, il faut les saisir tous dans l'ordre avant de continuer. */
-    private fun verifyThen(action: () -> Unit) {
-        val n = CodeStore.count(this)
-        if (n == 0) { action(); return }
-
-        fun step(i: Int) {
-            val field = passwordField()
-            AlertDialog.Builder(this)
-                .setTitle("Code ${i + 1} sur $n")
-                .setView(field)
-                .setPositiveButton("OK") { _, _ ->
-                    if (CodeStore.check(this, i, field.text.toString())) {
-                        if (i + 1 < n) step(i + 1) else action()
-                    } else {
-                        toast("Code incorrect")
-                    }
-                }
-                .setNegativeButton("Annuler", null)
-                .show()
-        }
-        step(0)
+    @SuppressLint("MissingPermission")
+    fun bonded(): List<Pair<String, String>> {
+        if (!btGranted()) return emptyList()
+        val adapter = getSystemService(BluetoothManager::class.java)?.adapter ?: return emptyList()
+        return adapter.bondedDevices?.map { Pair(it.name ?: "Appareil", it.address) } ?: emptyList()
     }
 
     // ---------- Actions ----------
 
-    @SuppressLint("MissingPermission")
-    private fun chooseDevices() {
-        if (!btGranted()) { toast("Autorise d'abord le Bluetooth (étape 3)"); return }
-        val adapter = getSystemService(BluetoothManager::class.java)?.adapter
-        val bonded = adapter?.bondedDevices?.toList() ?: emptyList()
-        if (bonded.isEmpty()) {
-            toast("Aucun appareil appairé. Appaire ta montre ou tes AirPods dans les réglages Bluetooth.")
-            return
-        }
-        val names = bonded.map { "${it.name ?: "Appareil"} (${it.address})" }.toTypedArray()
-        val trusted = Prefs.trustedDevices(this)
-        val checked = BooleanArray(bonded.size) { bonded[it].address in trusted }
+    fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
-        AlertDialog.Builder(this)
-            .setTitle("Appareils de confiance")
-            .setMultiChoiceItems(names, checked) { _, i, v -> checked[i] = v }
-            .setPositiveButton("OK") { _, _ ->
-                val chosen = bonded.indices.filter { checked[it] }.map { bonded[it].address }.toSet()
-                Prefs.setTrusted(this, chosen)
-                refresh()
-            }
-            .setNegativeButton("Annuler", null)
-            .show()
+    fun askAdmin() {
+        startActivity(
+            Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin())
+                .putExtra(
+                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    "Nécessaire pour verrouiller l'écran quand ta montre s'éloigne."
+                )
+        )
     }
 
-    private fun addCodeDialog() {
-        val field = passwordField()
-        AlertDialog.Builder(this)
-            .setTitle("Nouveau code (4 à 12 chiffres)")
-            .setView(field)
-            .setPositiveButton("Ajouter") { _, _ ->
-                val code = field.text.toString()
-                if (code.length in 4..12) {
-                    CodeStore.addCode(this, code)
-                    toast("Code ${CodeStore.count(this)} enregistré")
-                    refresh()
-                } else {
-                    toast("Le code doit faire entre 4 et 12 chiffres")
-                }
-            }
-            .setNegativeButton("Annuler", null)
-            .show()
+    fun askOverlay() {
+        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
     }
 
-    private fun showKey() {
-        AlertDialog.Builder(this)
-            .setTitle("Clé de liaison")
-            .setMessage(
-                Crypto.pretty(Prefs.secret(this)) +
-                    "\n\nTape cette clé dans la télécommande, sur l'autre téléphone. " +
-                    "Ne la partage avec personne."
-            )
-            .setPositiveButton("OK", null)
-            .show()
+    fun askPermissions() {
+        val perms = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 31) perms += Manifest.permission.BLUETOOTH_CONNECT
+        if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
+        perms += Manifest.permission.ACCESS_FINE_LOCATION
+        requestPermissions(perms.toTypedArray(), 1)
     }
 
-    private fun showRecoveryCodes() {
-        val codes = CodeStore.generateRecovery(this)
-        AlertDialog.Builder(this)
-            .setTitle("Codes de secours")
-            .setMessage(
-                "Note-les sur papier, dans un endroit sûr. Ils ne seront plus affichés. " +
-                    "Chacun ne marche qu'une fois.\n\n" + codes.joinToString("\n")
-            )
-            .setCancelable(false)
-            .setPositiveButton("C'est noté") { _, _ -> refresh() }
-            .show()
+    fun askAlwaysLocation() {
+        toast("Ouvre Autorisations, puis Position, puis « Toujours autoriser »")
+        startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        )
     }
 
-    private fun toggleProtection() {
-        if (Prefs.isEnabled(this)) {
-            verifyThen {
-                Prefs.setEnabled(this, false)
-                Prefs.setLocked(this, false)
-                stopService(Intent(this, GuardService::class.java))
-                refresh()
-            }
-            return
-        }
-        val missing = mutableListOf<String>()
-        if (!adminActive()) missing += "administrateur"
-        if (!Settings.canDrawOverlays(this)) missing += "affichage par-dessus"
-        if (!btGranted()) missing += "Bluetooth"
-        if (Prefs.trustedDevices(this).isEmpty()) missing += "appareil de confiance"
-        if (CodeStore.count(this) == 0) missing += "au moins un code"
-        if (CodeStore.recoveryCount(this) == 0) missing += "codes de secours"
-        if (missing.isNotEmpty()) {
-            toast("Il manque : " + missing.joinToString(", "))
-            return
-        }
-        Prefs.setEnabled(this, true)
-        startForegroundService(Intent(this, GuardService::class.java))
-        refresh()
-    }
+    fun openRemote() = startActivity(Intent(this, RemoteActivity::class.java))
 
-    private fun testLock() {
-        if (!Prefs.isEnabled(this)) { toast("Active d'abord la protection (étape 7)"); return }
+    fun testLock() {
+        if (!Prefs.isEnabled(this)) { toast("Active d'abord la protection"); return }
         startForegroundService(Intent(this, GuardService::class.java).putExtra("test", true))
         toast("Verrouillage dans 10 secondes")
     }
+
+    /** Renvoie null si tout est prêt, sinon la liste de ce qui manque. */
+    fun missing(): String? {
+        val m = mutableListOf<String>()
+        if (!adminActive()) m += "administrateur"
+        if (!Settings.canDrawOverlays(this)) m += "affichage par-dessus"
+        if (!btGranted()) m += "Bluetooth"
+        if (Prefs.trustedDevices(this).isEmpty()) m += "appareil de confiance"
+        if (CodeStore.count(this) == 0) m += "au moins un code"
+        if (CodeStore.recoveryCount(this) == 0) m += "codes de secours"
+        return if (m.isEmpty()) null else m.joinToString(", ")
+    }
+
+    fun enableProtection() {
+        val m = missing()
+        if (m != null) { toast("Il manque : $m"); return }
+        Prefs.setEnabled(this, true)
+        startForegroundService(Intent(this, GuardService::class.java))
+        tick++
+    }
+
+    fun disableProtection() {
+        Prefs.setEnabled(this, false)
+        Prefs.setLocked(this, false)
+        stopService(Intent(this, GuardService::class.java))
+        tick++
+    }
 }
+
+// ============================ Interface ============================
+
+private sealed class Dlg {
+    class Verify(val action: () -> Unit) : Dlg()
+    object AddCode : Dlg()
+    object Devices : Dlg()
+    class Recovery(val codes: List<String>) : Dlg()
+    object Key : Dlg()
+}
+
+@Composable
+private fun Home(act: MainActivity, tick: Int) {
+    var dlg by remember { mutableStateOf<Dlg?>(null) }
+    var local by remember { mutableIntStateOf(0) }
+    @Suppress("UNUSED_VARIABLE") val refreshKey = tick + local
+
+    val enabled = Prefs.isEnabled(act)
+    val trusted = Prefs.trustedDevices(act).size
+    val codes = CodeStore.count(act)
+    val recovery = CodeStore.recoveryCount(act)
+    val missing = act.missing()
+
+    fun verifyThen(action: () -> Unit) {
+        if (CodeStore.count(act) == 0) action() else dlg = Dlg.Verify(action)
+    }
+
+    Surface(color = cBg, modifier = Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Header("Antivol", "Protection de ton Samsung S22")
+
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(if (enabled) cGreen else cRed)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        if (enabled) "Protection active" else "Protection inactive",
+                        fontSize = 20.sp, fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    when {
+                        enabled -> "Le téléphone se verrouille si tes appareils de confiance s'éloignent."
+                        missing != null -> "Il manque : $missing"
+                        else -> "Tout est prêt. Tu peux activer la protection."
+                    },
+                    color = cDim, fontSize = 14.sp
+                )
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        if (enabled) verifyThen { act.disableProtection() } else act.enableProtection()
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (enabled) cPanel else cBlue)
+                ) { Text(if (enabled) "Désactiver la protection" else "Activer la protection", fontSize = 16.sp) }
+                TextButton(onClick = { act.testLock() }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Tester : verrouillage dans 10 secondes", color = cDim)
+                }
+            }
+
+            Section("CONFIGURATION")
+            AppCard {
+                StepRow(act.adminActive(), "Administrateur de l'appareil",
+                    "Permet de verrouiller l'écran", "Activer") { act.askAdmin() }
+                StepRow(Settings.canDrawOverlays(act), "Affichage par-dessus les applis",
+                    "Pour l'écran de blocage", "Autoriser") { act.askOverlay() }
+                StepRow(act.btGranted() && act.locGranted(), "Bluetooth, notifications, position",
+                    "Autorisations de base", "Autoriser") { act.askPermissions() }
+                StepRow(act.bgLocGranted(), "Position « tout le temps »",
+                    "Pour te localiser écran éteint", "Régler") { act.askAlwaysLocation() }
+                StepRow(trusted > 0, "Appareils de confiance",
+                    if (trusted > 0) "$trusted choisi(s)" else "Montre, AirPods...", "Choisir") {
+                    verifyThen { dlg = Dlg.Devices }
+                }
+                StepRow(codes > 0, "Codes de déverrouillage",
+                    if (codes > 0) "$codes code(s), saisis dans l'ordre" else "Au moins un code", "Ajouter") {
+                    verifyThen { dlg = Dlg.AddCode }
+                }
+                StepRow(recovery > 0, "Codes de secours",
+                    if (recovery > 0) "$recovery restant(s)" else "Pour si tu oublies un code", "Générer", last = true) {
+                    verifyThen { dlg = Dlg.Recovery(CodeStore.generateRecovery(act)) }
+                }
+            }
+            if (codes > 0) {
+                TextButton(onClick = {
+                    verifyThen { CodeStore.clearCodes(act); local++ }
+                }) { Text("Effacer tous les codes", color = cRed) }
+            }
+
+            Section("TÉLÉCOMMANDE")
+            AppCard {
+                Text("Contrôle ce téléphone depuis un autre : localiser, verrouiller, alarme, mode volé.",
+                    color = cDim, fontSize = 14.sp)
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = { verifyThen { dlg = Dlg.Key } },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Clé de liaison") }
+                    OutlinedButton(
+                        onClick = { act.openRemote() },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Télécommande") }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    when (val d = dlg) {
+        is Dlg.Verify -> VerifyDialog(
+            act, CodeStore.count(act),
+            onOk = { dlg = null; d.action() },
+            onCancel = { dlg = null }
+        )
+        Dlg.AddCode -> AddCodeDialog(act) { dlg = null; local++ }
+        Dlg.Devices -> DevicesDialog(act) { dlg = null; local++ }
+        is Dlg.Recovery -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Codes de secours") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Note-les sur papier, dans un endroit sûr. Ils ne seront plus affichés. Chacun ne marche qu'une fois.",
+                        color = cDim, fontSize = 14.sp)
+                    d.codes.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 22.sp) }
+                }
+            },
+            confirmButton = { TextButton({ dlg = null; local++ }) { Text("C'est noté") } }
+        )
+        Dlg.Key -> AlertDialog(
+            onDismissRequest = { dlg = null },
+            title = { Text("Clé de liaison") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(Crypto.pretty(Prefs.secret(act)), fontFamily = FontFamily.Monospace, fontSize = 26.sp)
+                    Text("Tape cette clé dans la télécommande, sur l'autre téléphone. Ne la partage avec personne.",
+                        color = cDim, fontSize = 14.sp)
+                }
+            },
+            confirmButton = { TextButton({ dlg = null }) { Text("OK") } }
+        )
+        null -> {}
+    }
+}
+
+@Composable
+private fun StepRow(
+    ok: Boolean, title: String, subtitle: String, action: String,
+    last: Boolean = false, onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            if (ok) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = if (ok) cGreen else cDim,
+            modifier = Modifier.size(26.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+            Text(subtitle, color = cDim, fontSize = 13.sp)
+        }
+        TextButton(onClick = onClick) { Text(if (ok) "Modifier" else action, color = cBlue) }
+    }
+    if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(cPanel))
+}
+
+@Composable
+private fun VerifyDialog(act: MainActivity, n: Int, onOk: () -> Unit, onCancel: () -> Unit) {
+    var step by remember { mutableIntStateOf(0) }
+    var value by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Code ${step + 1} sur $n") },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it.filter(Char::isDigit).take(12) },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+            )
+        },
+        confirmButton = {
+            TextButton({
+                if (CodeStore.check(act, step, value)) {
+                    value = ""
+                    if (step + 1 < n) step++ else onOk()
+                } else {
+                    act.toast("Code incorrect")
+                    value = ""
+                    step = 0
+                }
+            }) { Text("OK") }
+        },
+        dismissButton = { TextButton(onCancel) { Text("Annuler") } }
+    )
+}
+
+@Composable
+private fun AddCodeDialog(act: MainActivity, onDone: () -> Unit) {
+    var value by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Nouveau code") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("4 à 12 chiffres", color = cDim, fontSize = 14.sp)
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it.filter(Char::isDigit).take(12) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton({
+                if (value.length in 4..12) {
+                    CodeStore.addCode(act, value)
+                    act.toast("Code ${CodeStore.count(act)} enregistré")
+                    onDone()
+                } else {
+                    act.toast("Le code doit faire entre 4 et 12 chiffres")
+                }
+            }) { Text("Ajouter") }
+        },
+        dismissButton = { TextButton(onDone) { Text("Annuler") } }
+    )
+}
+
+@Composable
+private fun DevicesDialog(act: MainActivity, onClose: () -> Unit) {
+    val list = remember { act.bonded() }
+    val sel = remember { mutableStateListOf<String>().apply { addAll(Prefs.trustedDevices(act)) } }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Appareils de confiance") },
+        text = {
+            if (list.isEmpty()) {
+                Text("Aucun appareil appairé. Appaire ta montre ou tes AirPods dans les réglages Bluetooth, et autorise le Bluetooth ici.",
+                    color = cDim, fontSize = 14.sp)
+            } else {
+                Column {
+                    list.forEach { (name, addr) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { if (addr in sel) sel.remove(addr) else sel.add(addr) },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = addr in sel,
+                                onCheckedChange = { if (it) sel.add(addr) else sel.remove(addr) }
+                            )
+                            Text(name)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton({
+                Prefs.setTrusted(act, sel.toSet())
+                onClose()
+            }) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClose) { Text("Annuler") } }
+    )
+}
+
+@Suppress("unused")
+private val keepColor = Color.Unspecified
