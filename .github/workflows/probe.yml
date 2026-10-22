@@ -7,22 +7,23 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
-      - name: Sonder les modèles
+      - name: Sonder
+        shell: bash {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set +e
-          {
-          for r in estebanuri/face_recognition shubham0204/FaceRecognition_With_FaceNet_Android MCarlomagno/FaceRecognitionAuth syaringan357/Android-MobileFaceNet-MNN sirius-ai/MobileFaceNet_TF zhangzhen119/FaceRecognition; do
-            echo "-- $r"
-            gh api "repos/$r/git/trees/HEAD?recursive=1" --jq '.tree[] | select(.path|test("tflite|onnx|\\.pb$|\\.mnn$";"i")) | "\(.size) \(.path)"' 2>&1 | head -15
+          out=probe.txt
+          : > $out
+          for r in estebanuri/face_recognition shubham0204/FaceRecognition_With_FaceNet_Android MCarlomagno/FaceRecognitionAuth sirius-ai/MobileFaceNet_TF; do
+            echo "-- $r" >> $out
+            gh api "repos/$r/git/trees/HEAD?recursive=1" --jq '.tree[] | select(.path|test("tflite|onnx";"i")) | "\(.size) \(.path)"' >> $out 2>&1
           done
-          echo "== sherpa-onnx modèles de voix"
-          gh api repos/k2-fsa/sherpa-onnx/releases/tags/speaker-recongition-models --jq '.assets[] | "\(.size) \(.name)"' 2>&1 | head -60
-          echo "== sherpa-onnx dernière version"
-          gh api repos/k2-fsa/sherpa-onnx/releases/latest --jq '.tag_name' 2>&1
-          gh api repos/k2-fsa/sherpa-onnx/releases/latest --jq '.assets[] | select(.name|test("android|aar";"i")) | "\(.size) \(.name)"' 2>&1 | head -20
-          } > probe.txt 2>&1; true
-          gh release delete probe --yes --cleanup-tag || true
-          gh release create probe --prerelease --title "Sonde" --notes-file probe.txt
+          echo "== voix" >> $out
+          gh api repos/k2-fsa/sherpa-onnx/releases/tags/speaker-recongition-models --jq '.assets[] | "\(.size) \(.name)"' >> $out 2>&1
+          echo "== sherpa dernier" >> $out
+          gh api repos/k2-fsa/sherpa-onnx/releases/latest --jq '.tag_name' >> $out 2>&1
+          gh api repos/k2-fsa/sherpa-onnx/releases/latest --jq '.assets[] | select(.name|test("android";"i")) | "\(.size) \(.name)"' >> $out 2>&1
+          gh release delete probe --yes --cleanup-tag
+          gh release create probe --prerelease --title "Sonde" --notes "voir probe.txt"
           gh release upload probe probe.txt --clobber
+          exit 0
