@@ -16,7 +16,10 @@ fetch() { # url fichier sha256
   if [ -f "$out" ] && check "$out" "$sha"; then return 0; fi
   echo "Téléchargement de $(basename "$out")"
   curl -fsSL --retry 5 --retry-delay 3 -o "$out" "$url"
-  check "$out" "$sha" || { echo "Empreinte incorrecte pour $out" >&2; exit 1; }
+  if ! check "$out" "$sha"; then
+    echo "Empreinte incorrecte pour $out : attendue $sha, obtenue $(sha256sum "$out" | cut -d' ' -f1), taille $(stat -c %s "$out")" >&2
+    exit 1
+  fi
 }
 
 # Visage : MobileFaceNet (licence MIT, syaringan357)

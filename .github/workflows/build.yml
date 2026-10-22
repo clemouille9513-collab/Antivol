@@ -20,7 +20,9 @@ jobs:
         with:
           gradle-version: 8.7
       - name: Modèles de reconnaissance (visage, voix)
-        run: bash scripts/telecharger-modeles.sh
+        run: |
+          set -o pipefail
+          bash scripts/telecharger-modeles.sh 2>&1 | tee modeles.log
       - name: Compiler
         run: |
           set -o pipefail
@@ -40,7 +42,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          grep -E "^e: |error:|What went wrong" -A3 build.log | head -c 60000 > err.txt || true
-          [ -s err.txt ] || tail -c 20000 build.log > err.txt
+          {
+            echo "== modèles"; tail -c 6000 modeles.log 2>/dev/null
+            echo; echo "== compilation"
+            grep -E "^e: |error:|What went wrong" -A3 build.log 2>/dev/null | head -c 50000
+          } > err.txt || true
+          [ -s err.txt ] || echo "Échec sans détail" > err.txt
           gh release delete erreur-build --yes --cleanup-tag || true
           gh release create erreur-build --prerelease --title "Erreur de compilation" --notes-file err.txt
