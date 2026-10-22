@@ -1,0 +1,39 @@
+name: Sonde ntfy
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Sonder
+        shell: bash {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out=probe.txt
+          : > $out
+          T=antivol-sonde-$RANDOM$RANDOM
+          head -c 40000 /dev/urandom > f.bin
+          echo "== PUT 40 Ko" >> $out
+          curl -s -m 30 -X PUT -H "Filename: frame.bin" --data-binary @f.bin https://ntfy.sh/$T -w '\nHTTP %{http_code}\n' >> $out 2>&1
+          sleep 1
+          url=$(curl -s -m 30 "https://ntfy.sh/$T/json?poll=1&since=all" | grep -o '"url":"[^"]*"' | head -1 | cut -d'"' -f4)
+          echo "URL=$url" >> $out
+          curl -s -m 30 -o g.bin -w 'GET %{http_code} %{size_download}\n' "$url" >> $out 2>&1
+          cmp f.bin g.bin && echo "IDENTIQUE" >> $out
+          echo "== 40 PUT de 25 Ko, un toutes les 0,5 s" >> $out
+          head -c 25000 /dev/urandom > h.bin
+          codes=""
+          for i in $(seq 1 40); do
+            c=$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X PUT -H "Filename: f$i.bin" --data-binary @h.bin https://ntfy.sh/$T)
+            codes="$codes $c"
+            sleep 0.5
+          done
+          echo "$codes" >> $out
+          echo "== en-têtes de limites" >> $out
+          curl -sI -m 20 https://ntfy.sh/v1/health | head -5 >> $out 2>&1
+          gh release delete sonde --yes --cleanup-tag
+          gh release create sonde --prerelease --title "Sonde ntfy" --notes-file probe.txt
+          exit 0
