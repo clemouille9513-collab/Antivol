@@ -7,6 +7,7 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
       - name: Sonder
         shell: bash {0}
         env:
@@ -34,6 +35,11 @@ jobs:
           echo "$codes" >> $out
           echo "== en-têtes de limites" >> $out
           curl -sI -m 20 https://ntfy.sh/v1/health | head -5 >> $out 2>&1
-          gh release delete sonde --yes --cleanup-tag
-          gh release create sonde --prerelease --title "Sonde ntfy" --notes-file probe.txt
+          mkdir -p sonde
+          tr -cd '\11\12\15\40-\176' < probe.txt > sonde/resultat.txt
+          git config user.name "sonde"
+          git config user.email "sonde@users.noreply.github.com"
+          git add sonde/resultat.txt
+          git commit -m "Résultat de la sonde ntfy [skip ci]"
+          git push
           exit 0
