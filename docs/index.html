@@ -327,6 +327,11 @@
         status.ackTs = ts; status.locked = p[3] === "1"; status.stolen = p[4] === "1"; status.batt = parseInt(p[5], 10);
       }
       touch(ts); changed = true;
+    } else if (type === "hb" && p.length >= 6) {
+      if (ts >= (status.ackTs || 0)) {
+        status.ackTs = ts; status.locked = p[2] === "1"; status.stolen = p[3] === "1"; status.batt = parseInt(p[4], 10);
+      }
+      touch(ts); changed = true;
     } else if (type === "evt" && p.length >= 4) {
       var et = p[2], detail = p.slice(3).join("|");
       if (!events.some(function (x) { return x.ts === ts && x.type === et && x.detail === detail; })) {

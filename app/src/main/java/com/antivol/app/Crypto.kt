@@ -46,6 +46,19 @@ object Crypto {
         return Base64.encodeToString(iv + cipher.doFinal(data), Base64.NO_WRAP)
     }
 
+    fun decryptBytes(secret: String, b64: String): ByteArray? = try {
+        val raw = Base64.decode(b64.trim(), Base64.NO_WRAP)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(sha("$secret:enc"), "AES"),
+            GCMParameterSpec(128, raw.copyOfRange(0, 12))
+        )
+        cipher.doFinal(raw, 12, raw.size - 12)
+    } catch (e: Exception) {
+        null
+    }
+
     fun decrypt(secret: String, b64: String): String? = try {
         val raw = Base64.decode(b64.trim(), Base64.NO_WRAP)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")

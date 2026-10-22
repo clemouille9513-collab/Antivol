@@ -56,6 +56,7 @@ class RemoteActivity : ComponentActivity() {
     private var awaiting = false
     private var pinging = false
     private var token = 0
+    private var netInfo by mutableStateOf("")
     private val ui = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** Attend la réponse du S22 ; sinon explique quoi vérifier. */
@@ -121,6 +122,7 @@ class RemoteActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Ntfy.watchNetwork(this)
         val k = Prefs.remoteSecret(this)
         if (k.isNotEmpty()) keyText = Crypto.pretty(k)
         refreshPath()
@@ -148,6 +150,12 @@ class RemoteActivity : ComponentActivity() {
             if (armed) {
                 delay(4000)
                 armed = false
+            }
+        }
+        LaunchedEffect(Unit) {
+            while (true) {
+                netInfo = Ntfy.summary()
+                delay(3000)
             }
         }
 
@@ -182,6 +190,14 @@ class RemoteActivity : ComponentActivity() {
                     Text("État du S22", color = cDim, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
                     Text(info, fontSize = 15.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text(netInfo, color = cDim, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { Ntfy.check { r -> runOnUiThread { bot(r) } } },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Tester le réseau") }
                 }
 
                 Button(
@@ -338,6 +354,12 @@ class RemoteActivity : ComponentActivity() {
                 "loc" -> if (p.size >= 5) {
                     Prefs.addHistory(this, "$ts,${p[2]},${p[3]},${p[4]}")
                     refreshPath()
+                }
+                "hb" -> if (p.size >= 6) {
+                    info = "Signal du S22 à ${fmt.format(Date(ts * 1000))} (${p[5]})\n" +
+                        "Verrouillé : ${if (p[2] == "1") "oui" else "non"}\n" +
+                        "Mode volé : ${if (p[3] == "1") "oui" else "non"}\n" +
+                        "Batterie : ${p[4]} %"
                 }
                 "ack" -> if (p.size >= 6) {
                     if (awaiting) {

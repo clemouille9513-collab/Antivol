@@ -61,6 +61,27 @@ object Prefs {
     fun isPeekEnabled(c: Context) = sp(c).getBoolean("peek", true)
     fun setPeekEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("peek", v).apply()
 
+    /** Suivi des trajets : une position envoyée toutes les 10 minutes quand la protection est active. */
+    fun isTracking(c: Context) = sp(c).getBoolean("track", true)
+    fun setTracking(c: Context, v: Boolean) = sp(c).edit().putBoolean("track", v).apply()
+
+    /** Mémorise les derniers ordres reçus pour ne jamais exécuter deux fois le même. Vrai si l'ordre est nouveau. */
+    @Synchronized
+    fun markSeen(c: Context, plain: String): Boolean {
+        val h = Integer.toHexString(plain.hashCode()) + "x" + plain.length
+        val list = (sp(c).getString("seen", "") ?: "").split(",").filter { it.isNotEmpty() }
+        if (h in list) return false
+        sp(c).edit().putString("seen", (list + h).takeLast(40).joinToString(",")).apply()
+        return true
+    }
+
+    fun str(c: Context, key: String, def: String = "") = sp(c).getString(key, def) ?: def
+    fun setStr(c: Context, key: String, v: String) = sp(c).edit().putString(key, v).apply()
+    fun bool(c: Context, key: String, def: Boolean = false) = sp(c).getBoolean(key, def)
+    fun setBool(c: Context, key: String, v: Boolean) = sp(c).edit().putBoolean(key, v).apply()
+    fun long(c: Context, key: String, def: Long = 0L) = sp(c).getLong(key, def)
+    fun setLong(c: Context, key: String, v: Long) = sp(c).edit().putLong(key, v).apply()
+
     /** Secondes d'attente avant de verrouiller quand l'appareil disparaît. */
     fun graceSeconds(c: Context) = sp(c).getInt("grace", 30)
 }

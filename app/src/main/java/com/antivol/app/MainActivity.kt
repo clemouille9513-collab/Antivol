@@ -170,6 +170,7 @@ class MainActivity : ComponentActivity() {
         if (!adminActive()) m += "administrateur"
         if (!Settings.canDrawOverlays(this)) m += "affichage par-dessus"
         if (!btGranted()) m += "Bluetooth"
+        if (!batteryUnrestricted()) m += "batterie sans restriction"
         if (Prefs.trustedDevices(this).isEmpty()) m += "appareil de confiance"
         if (CodeStore.count(this) == 0) m += "au moins un code"
         if (CodeStore.recoveryCount(this) == 0) m += "codes de secours"

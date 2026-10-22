@@ -27,6 +27,7 @@ import android.os.PowerManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -57,6 +58,23 @@ class GuardService : Service() {
     private var eco = false
     private var simAbsent = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    /** Signal de vie envoyé toutes les 5 minutes : la télécommande sait que le S22 est joignable. */
+    private val hbRunnable = object : Runnable {
+        override fun run() {
+            reply("hb|${if (Prefs.isLocked(this@GuardService)) 1 else 0}|${if (Prefs.isStolen(this@GuardService)) 1 else 0}|${battery()}|${Ntfy.netType}")
+            handler.postDelayed(this, 300_000)
+        }
+    }
+
+    /** Position envoyée toutes les 10 minutes pour dessiner les trajets. */
+    private val trackRunnable = object : Runnable {
+        override fun run() {
+            if (Prefs.isEnabled(this@GuardService) && Prefs.isTracking(this@GuardService)) sendLocation()
+            handler.postDelayed(this, if (eco || battery() < 15) 1_800_000 else 600_000)
+        }
+    }
     private var peekOverlay: PeekOverlay? = null
     private var peekBusy = false
     private var peekPausedUntil = 0L
@@ -168,6 +186,24 @@ class GuardService : Service() {
             }
         }
 
+        Ntfy.watchNetwork(this)
+        if (wifiLock == null) {
+            try {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                @Suppress("DEPRECATION")
+                val mode = if (Build.VERSION.SDK_INT >= 29) WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                else WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                wifiLock = wm.createWifiLock(mode, "antivol:wifi").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (_: Exception) {}
+        }
+        handler.removeCallbacks(hbRunnable)
+        handler.postDelayed(hbRunnable, 20_000)
+        handler.removeCallbacks(trackRunnable)
+        handler.postDelayed(trackRunnable, 60_000)
+
         // Détection des regards : une photo avant toutes les 30 secondes quand l'écran est allumé.
         handler.removeCallbacks(peekRunnable)
         handler.postDelayed(peekRunnable, 30_000)
@@ -195,7 +231,7 @@ class GuardService : Service() {
         // Écoute des ordres de la télécommande.
         if (subscription == null) {
             val secret = Prefs.secret(this)
-            subscription = Ntfy.Subscription(Crypto.topic(secret, "cmd"), "1m") { body ->
+            subscription = Ntfy.Subscription(Crypto.topic(secret, "cmd"), "6m") { body ->
                 handleCommand(secret, body)
             }.start()
             event("service", "Protection démarrée, batterie ${battery()} %")
@@ -236,6 +272,8 @@ class GuardService : Service() {
         peekOverlay = null
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
         wakeLock = null
+        try { wifiLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
+        wifiLock = null
         super.onDestroy()
     }
 
@@ -256,6 +294,7 @@ class GuardService : Service() {
         if (p.size < 2) return
         val ts = p[0].toLongOrNull() ?: return
         if (abs(System.currentTimeMillis() / 1000 - ts) > 300) return
+        if (!Prefs.markSeen(this, plain)) return
         val cmd = p[1]
         val arg = p.getOrElse(2) { "" }.take(200)
 
@@ -380,7 +419,7 @@ class GuardService : Service() {
     private fun sendPhoto(bytes: ByteArray, front: Boolean, why: String) {
         val secret = Prefs.secret(this)
         val enc = Crypto.encryptBytes(secret, bytes)
-        val chunks = enc.chunked(2000)
+        val chunks = enc.chunked(2600)
         val id = System.currentTimeMillis() / 1000
         val facing = if (front) "front" else "back"
         event("photo", "Photo ${if (front) "avant" else "arrière"} envoyée ($why)")
@@ -547,18 +586,19 @@ class GuardService : Service() {
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
-            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            val base = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            val loc = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val cam = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            // Android refuse caméra et position quand le service démarre en arrière-plan (redémarrage du téléphone) :
+            // on essaie du plus complet au plus simple, sans jamais planter.
+            val tries = mutableListOf<Int>()
+            if (loc && cam) tries += base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (loc) tries += base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            tries += base
+            for (t in tries) {
+                try { startForeground(1, notification, t); return } catch (_: Exception) {}
             }
-            val withCamera = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            val cameraOk = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-            try {
-                startForeground(1, notification, if (cameraOk) withCamera else type)
-            } catch (_: Exception) {
-                // Démarrage depuis le redémarrage du téléphone : Android refuse la caméra, on s'en passe.
-                startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-            }
+            try { startForeground(1, notification) } catch (_: Exception) { stopSelf() }
         } else {
             startForeground(1, notification)
         }
