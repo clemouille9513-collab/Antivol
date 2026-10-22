@@ -59,6 +59,7 @@ class GuardService : Service() {
     private var simAbsent = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var airplaneOkUntil = 0L
 
     /** Signal de vie envoyé toutes les 5 minutes : la télécommande sait que le S22 est joignable. */
     private val hbRunnable = object : Runnable {
@@ -106,7 +107,9 @@ class GuardService : Service() {
                     if (intent.getBooleanExtra("state", false)) {
                         connected.clear()
                         event("airplane", "Mode avion activé")
-                        triggerLock("Mode avion activé")
+                        if (Prefs.bool(context, "lock_airplane", true) && System.currentTimeMillis() > airplaneOkUntil) {
+                            triggerLock("Mode avion activé")
+                        }
                     }
                     return
                 }
@@ -308,8 +311,35 @@ class GuardService : Service() {
                 "locate" -> sendLocation()
                 "photo" -> takePhoto(arg != "back", "Demande de la télécommande")
                 "free" -> release()
+                "avion" -> airplane(arg == "on")
+                "cfg" -> {
+                    val kv = arg.split("=", limit = 2)
+                    if (kv.size == 2) {
+                        val on = kv[1] == "1"
+                        when (kv[0]) {
+                            "lock_airplane" -> Prefs.setBool(this, "lock_airplane", on)
+                            "peek" -> Prefs.setPeekEnabled(this, on)
+                            "track" -> Prefs.setTracking(this, on)
+                        }
+                        event("cfg", "Réglage ${kv[0]} : ${if (on) "oui" else "non"}")
+                    }
+                }
             }
             reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}")
+        }
+    }
+
+    /** Mode avion à distance : touche la tuile des réglages rapides grâce à la protection renforcée. */
+    private fun airplane(on: Boolean) {
+        val shield = ShieldService.instance
+        if (shield == null) {
+            event("airplane", "Mode avion impossible : la protection renforcée n'est pas active sur le S22")
+            return
+        }
+        airplaneOkUntil = System.currentTimeMillis() + 60_000
+        event("airplane", if (on) "Mode avion demandé : la connexion va se couper" else "Coupure du mode avion demandée")
+        shield.setAirplane(on) { ok ->
+            if (!ok) event("airplane", "Tuile « Mode avion » introuvable dans les réglages rapides")
         }
     }
 
