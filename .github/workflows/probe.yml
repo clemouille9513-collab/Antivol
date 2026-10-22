@@ -11,6 +11,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set +e
           {
           for r in estebanuri/face_recognition shubham0204/FaceRecognition_With_FaceNet_Android MCarlomagno/FaceRecognitionAuth syaringan357/Android-MobileFaceNet-MNN sirius-ai/MobileFaceNet_TF zhangzhen119/FaceRecognition; do
             echo "-- $r"
@@ -21,7 +22,7 @@ jobs:
           echo "== sherpa-onnx dernière version"
           gh api repos/k2-fsa/sherpa-onnx/releases/latest --jq '.tag_name' 2>&1
           gh api repos/k2-fsa/sherpa-onnx/releases/latest --jq '.assets[] | select(.name|test("android|aar";"i")) | "\(.size) \(.name)"' 2>&1 | head -20
-          } > probe.txt 2>&1
+          } > probe.txt 2>&1; true
           gh release delete probe --yes --cleanup-tag || true
           gh release create probe --prerelease --title "Sonde" --notes-file probe.txt
           gh release upload probe probe.txt --clobber
