@@ -20,6 +20,15 @@ class AdminReceiver : DeviceAdminReceiver() {
         report(context, "Administrateur désactivé : l'appli peut maintenant être désinstallée")
     }
 
+    /** Mauvais code sur l'écran de verrouillage Samsung : photo de l'intrus. */
+    override fun onPasswordFailed(context: Context, intent: Intent) {
+        if (!Prefs.isEnabled(context)) return
+        try {
+            context.startForegroundService(Intent(context, GuardService::class.java).putExtra("intruder", true))
+        } catch (_: Exception) {
+        }
+    }
+
     private fun report(context: Context, text: String) {
         if (!Prefs.isEnabled(context)) return
         val secret = Prefs.secret(context)

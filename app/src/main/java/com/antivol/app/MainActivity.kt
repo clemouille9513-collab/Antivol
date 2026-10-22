@@ -156,6 +156,11 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    fun askShield() {
+        toast("Ouvre « Applications installées », choisis Antivol et active-le. Si Android refuse : Infos de l'appli, menu ⋮, « Autoriser les paramètres restreints ».")
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
     fun openRemote() = startActivity(Intent(this, RemoteActivity::class.java))
 
     fun testLock() {
@@ -171,6 +176,7 @@ class MainActivity : ComponentActivity() {
         if (!Settings.canDrawOverlays(this)) m += "affichage par-dessus"
         if (!btGranted()) m += "Bluetooth"
         if (!batteryUnrestricted()) m += "batterie sans restriction"
+        if (!ShieldService.enabled(this)) m += "protection renforcée"
         if (Prefs.trustedDevices(this).isEmpty()) m += "appareil de confiance"
         if (CodeStore.count(this) == 0) m += "au moins un code"
         if (CodeStore.recoveryCount(this) == 0) m += "codes de secours"
@@ -293,6 +299,8 @@ private fun Home(act: MainActivity, tick: Int) {
                     "Autorisations de base", "Autoriser") { act.askPermissions() }
                 StepRow(act.bgLocGranted(), "Position « tout le temps »",
                     "Pour te localiser écran éteint", "Régler") { act.askAlwaysLocation() }
+                StepRow(ShieldService.enabled(act), "Protection renforcée",
+                    "Bloque barre de notifications, réglages et désinstallation", "Activer") { act.askShield() }
                 StepRow(act.batteryUnrestricted(), "Batterie sans restriction",
                     "Pour que la télécommande marche écran éteint", "Autoriser") { act.askBatteryUnrestricted() }
                 StepRow(trusted > 0, "Appareils de confiance",

@@ -246,6 +246,7 @@ class GuardService : Service() {
         }
 
         if (intent?.getBooleanExtra("boot", false) == true) checkAfterBoot()
+        if (intent?.getBooleanExtra("intruder", false) == true) intruder()
 
         // Bouton "Tester" de l'appli : verrouillage dans 10 secondes.
         if (intent?.getBooleanExtra("test", false) == true) {
@@ -426,6 +427,19 @@ class GuardService : Service() {
         for ((i, c) in chunks.withIndex()) {
             reply("photo|$id|$i|${chunks.size}|$facing|$c")
         }
+    }
+
+    // ---------- Intrus ----------
+
+    private var lastIntruder = 0L
+
+    /** Quelqu'un se trompe de code sur l'écran de verrouillage Samsung : photo + alerte (une par minute). */
+    private fun intruder() {
+        val now = System.currentTimeMillis()
+        if (now - lastIntruder < 60_000) return
+        lastIntruder = now
+        event("wrong", "Mauvais code sur l'écran de verrouillage du téléphone")
+        takePhoto(true, "mauvais code du téléphone")
     }
 
     // ---------- Regards indiscrets ----------

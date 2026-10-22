@@ -24,7 +24,10 @@ import android.widget.TextView
 class LockOverlay(
     private val ctx: Context,
     private val onWrong: (Int) -> Unit,
-    private val onUnlocked: () -> Unit
+    private val onUnlocked: () -> Unit,
+    private val title: String = "Appareil verrouillé",
+    private val type: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+    private val onCancel: (() -> Unit)? = null
 ) {
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var root: View? = null
@@ -58,7 +61,7 @@ class LockOverlay(
         }
 
         titleView = TextView(ctx).apply {
-            text = "Appareil verrouillé"
+            text = title
             textSize = 28f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -99,11 +102,19 @@ class LockOverlay(
         layout.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         layout.addView(ok, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(16) })
         layout.addView(modeButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) })
+        onCancel?.let { cancel ->
+            val b = Button(ctx).apply {
+                text = "Annuler"
+                isAllCaps = false
+                setOnClickListener { hide(); cancel() }
+            }
+            layout.addView(b, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        }
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            type,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,

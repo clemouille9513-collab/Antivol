@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Antivol</string>
+    <string name="shield_desc">Empêche de contourner l\'antivol : ferme la barre de notifications, le menu d\'extinction, les réglages et la désinstallation quand le téléphone est verrouillé, et demande les codes avant de modifier l\'appli.</string>
 </resources>
