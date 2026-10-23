@@ -35,7 +35,7 @@ if ! { [ -f "$JNI/libonnxruntime.so" ] && check "$JNI/libonnxruntime.so" 33847ad
      && [ -f "$JNI/libsherpa-onnx-jni.so" ] && check "$JNI/libsherpa-onnx-jni.so" 3c6492ea91ea68fd3b72b9495efdde6dd913f6b58c387e3b07389cf335f4d26f; }; then
   fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-android.tar.bz2" \
     "$TMP/sherpa.tar.bz2" 2ff63469a71cb6009aa2e3ed5f4a670f8abdcbe4bb9ffd23776afc792a6b4f44
-  tar -xjf "$TMP/sherpa.tar.bz2" -C "$TMP" jniLibs/arm64-v8a/libonnxruntime.so jniLibs/arm64-v8a/libsherpa-onnx-jni.so
+  tar -xjf "$TMP/sherpa.tar.bz2" -C "$TMP" ./jniLibs/arm64-v8a/libonnxruntime.so ./jniLibs/arm64-v8a/libsherpa-onnx-jni.so
   cp "$TMP/jniLibs/arm64-v8a/libonnxruntime.so" "$TMP/jniLibs/arm64-v8a/libsherpa-onnx-jni.so" "$JNI/"
   check "$JNI/libonnxruntime.so" 33847ad43bffe204699fd4a27f7f3603452a8cdaf2f9a44983a0bc31ffcf2da1
   check "$JNI/libsherpa-onnx-jni.so" 3c6492ea91ea68fd3b72b9495efdde6dd913f6b58c387e3b07389cf335f4d26f
