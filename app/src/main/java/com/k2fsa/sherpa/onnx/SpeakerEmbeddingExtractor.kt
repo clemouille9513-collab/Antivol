@@ -60,3 +60,7 @@ class SpeakerEmbeddingExtractor(
 
     companion object {
         init {
+            System.loadLibrary("sherpa-onnx-jni")
+        }
+    }
+}
