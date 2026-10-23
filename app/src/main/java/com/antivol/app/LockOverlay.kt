@@ -27,7 +27,9 @@ class LockOverlay(
     private val onUnlocked: () -> Unit,
     private val title: String = "Appareil verrouillé",
     private val type: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-    private val onCancel: (() -> Unit)? = null
+    private val onCancel: (() -> Unit)? = null,
+    /** Envoie un code de secours par e-mail et renvoie le message à afficher. Null = pas d'e-mail enregistré. */
+    private val onMail: (() -> String)? = null
 ) {
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var root: View? = null
@@ -42,6 +44,9 @@ class LockOverlay(
     private lateinit var infoView: TextView
     private lateinit var input: EditText
     private lateinit var modeButton: Button
+    private var mailButton: Button? = null
+
+    val isShown: Boolean get() = root?.isAttachedToWindow == true
 
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
 
@@ -102,6 +107,21 @@ class LockOverlay(
         layout.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         layout.addView(ok, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(16) })
         layout.addView(modeButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) })
+        onMail?.let { mail ->
+            val b = Button(ctx).apply {
+                text = "Recevoir un code par e-mail"
+                isAllCaps = false
+                setOnClickListener {
+                    isEnabled = false
+                    Thread {
+                        val msg = try { mail() } catch (e: Exception) { "Envoi impossible" }
+                        input.post { refresh(msg); isEnabled = true }
+                    }.start()
+                }
+            }
+            mailButton = b
+            layout.addView(b, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        }
         onCancel?.let { cancel ->
             val b = Button(ctx).apply {
                 text = "Annuler"
@@ -142,6 +162,7 @@ class LockOverlay(
     }
 
     private fun refresh(message: String? = null) {
+        mailButton?.visibility = if (recoveryMode) View.VISIBLE else View.GONE
         if (recoveryMode) {
             infoView.text = message ?: "Entre un code de secours"
             modeButton.text = "Retour aux codes normaux"
@@ -157,7 +178,7 @@ class LockOverlay(
         if (code.isEmpty()) { refresh(); return }
 
         if (recoveryMode) {
-            if (CodeStore.checkRecovery(ctx, code)) finish() else fail("Code de secours incorrect")
+            if (CodeStore.checkRecovery(ctx, code) || CodeStore.checkMailCode(ctx, code)) finish() else fail("Code de secours incorrect")
             return
         }
         if (CodeStore.check(ctx, step, code)) {

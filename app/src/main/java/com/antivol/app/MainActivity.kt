@@ -12,6 +12,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -136,7 +138,42 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
         perms += Manifest.permission.ACCESS_FINE_LOCATION
         perms += Manifest.permission.CAMERA
+        perms += Manifest.permission.RECORD_AUDIO
+        perms += Manifest.permission.SEND_SMS
         requestPermissions(perms.toTypedArray(), 1)
+    }
+
+    fun micGranted() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    fun smsGranted() = checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+    fun camGranted() = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    /** Enregistre le visage du propriétaire : 4 photos de la caméra avant, comparées ensuite pendant une course. */
+    fun enrollFace(done: (String) -> Unit) {
+        if (!camGranted()) { askPermissions(); done("Autorise la caméra, puis recommence."); return }
+        toast("Regarde la caméra avant, sans bouger, pendant 5 secondes")
+        Thread {
+            val shots = ArrayList<ByteArray>()
+            for (i in 0 until 4) {
+                val latch = CountDownLatch(1)
+                var jpg: ByteArray? = null
+                PhotoCapture(this).capture(true, 720) { b -> jpg = b; latch.countDown() }
+                latch.await(12, TimeUnit.SECONDS)
+                jpg?.let { shots += it }
+                try { Thread.sleep(600) } catch (_: InterruptedException) {}
+            }
+            val msg = try { Biometrics.enrollFace(this, shots) } catch (e: Exception) { "Erreur : ${e.message ?: e.javaClass.simpleName}" }
+            runOnUiThread { done(msg); tick++ }
+        }.start()
+    }
+
+    /** Enregistre la voix du propriétaire (7 secondes de parole). */
+    fun enrollVoice(done: (String) -> Unit) {
+        if (!micGranted()) { askPermissions(); done("Autorise le micro, puis recommence."); return }
+        toast("Parle normalement pendant 7 secondes (lis un texte à voix haute)")
+        Thread {
+            val msg = try { Biometrics.enrollVoice(this) } catch (e: Exception) { "Erreur : ${e.message ?: e.javaClass.simpleName}" }
+            runOnUiThread { done(msg); tick++ }
+        }.start()
     }
 
     fun askAlwaysLocation() {
@@ -340,6 +377,104 @@ private fun Home(act: MainActivity, tick: Int) {
                 }
             }
 
+            Section("RECONNAISSANCE DU PROPRIÉTAIRE")
+            AppCard {
+                var recoMsg by remember { mutableStateOf("") }
+                var motion by remember { mutableStateOf(Prefs.bool(act, "motion_guard", true)) }
+                StepRow(Biometrics.faceEnrolled(act), "Mon visage",
+                    "4 photos de la caméra avant, gardées sous forme d'empreinte", "Enregistrer") {
+                    verifyThen { act.enrollFace { recoMsg = it } }
+                }
+                StepRow(Biometrics.voiceEnrolled(act), "Ma voix",
+                    "7 secondes de parole, gardées sous forme d'empreinte", "Enregistrer") {
+                    verifyThen { act.enrollVoice { recoMsg = it } }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Vérifier quand je cours", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                        Text(
+                            "Si le téléphone détecte une course, il regarde qui le tient : visage ou voix inconnus, il se verrouille.",
+                            color = cDim, fontSize = 13.sp
+                        )
+                    }
+                    Switch(checked = motion, onCheckedChange = {
+                        motion = it
+                        Prefs.setBool(act, "motion_guard", it)
+                    })
+                }
+                if (recoMsg.isNotEmpty()) Text(recoMsg, color = cDim, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                if (Biometrics.faceEnrolled(act) || Biometrics.voiceEnrolled(act)) {
+                    TextButton(onClick = {
+                        verifyThen { Biometrics.clearFace(act); Biometrics.clearVoice(act); local++ }
+                    }) { Text("Effacer mon visage et ma voix", color = cRed) }
+                }
+            }
+
+            Section("CONTACTS ET ALERTES")
+            AppCard {
+                var email by remember { mutableStateOf(Prefs.str(act, "owner_email")) }
+                var phone by remember { mutableStateOf(Prefs.str(act, "owner_phone")) }
+                var alertNum by remember { mutableStateOf(Prefs.str(act, "alert_number")) }
+                Text("Ces infos restent sur ce téléphone. L'e-mail sert à recevoir un code de secours depuis l'écran de blocage. Les numéros reçoivent un SMS avec la position quand tu actives « Volé ».",
+                    color = cDim, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = email, onValueChange = { email = it.trim() }, singleLine = true,
+                    label = { Text("Mon e-mail") }, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = phone, onValueChange = { phone = it.trim() }, singleLine = true,
+                    label = { Text("Mon numéro (l'autre téléphone)") }, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = alertNum, onValueChange = { alertNum = it.trim() }, singleLine = true,
+                    label = { Text("Numéro à prévenir en plus (proche, commissariat)") }, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        verifyThen {
+                            Prefs.setStr(act, "owner_email", email)
+                            Prefs.setStr(act, "owner_phone", phone)
+                            Prefs.setStr(act, "alert_number", alertNum)
+                            if ((phone.isNotEmpty() || alertNum.isNotEmpty()) && !act.smsGranted()) act.askPermissions()
+                            act.toast("Contacts enregistrés")
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Enregistrer") }
+            }
+
+            Section("RÉSEAU")
+            AppCard {
+                var server by remember { mutableStateOf(Prefs.str(act, "ntfy_base")) }
+                Text("Liaison directe Wi-Fi : IP de ce téléphone sur ce réseau : ${Lan.localIp().ifEmpty { "pas de Wi-Fi" }}.",
+                    color = cDim, fontSize = 13.sp)
+                Text("Sur le même Wi-Fi, la télécommande trouve ce S22 toute seule et lui parle sans passer par internet.",
+                    color = cDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = server, onValueChange = { server = it.trim() }, singleLine = true,
+                    label = { Text("Serveur de messages (avancé, vide = ntfy.sh)") }, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        Prefs.setStr(act, "ntfy_base", server)
+                        Ntfy.configure(act)
+                        act.toast("Serveur enregistré : ${Ntfy.baseUrl}")
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Enregistrer le serveur") }
+            }
+
             Section("TÉLÉCOMMANDE")
             AppCard {
                 Text("Contrôle ce téléphone depuis un autre : localiser, verrouiller, alarme, mode volé.",
@@ -390,6 +525,8 @@ private fun Home(act: MainActivity, tick: Int) {
                     Text(Crypto.pretty(Prefs.secret(act)), fontFamily = FontFamily.Monospace, fontSize = 26.sp)
                     Text("Tape cette clé dans la télécommande, sur l'autre téléphone. Ce S22 écoute maintenant les ordres. Ne la partage avec personne.",
                         color = cDim, fontSize = 14.sp)
+                    Text("Sur le même Wi-Fi, la télécommande trouve ce S22 toute seule (IP : ${Lan.localIp().ifEmpty { "pas de Wi-Fi" }}).",
+                        color = cDim, fontSize = 13.sp)
                 }
             },
             confirmButton = { TextButton({ dlg = null }) { Text("OK") } }

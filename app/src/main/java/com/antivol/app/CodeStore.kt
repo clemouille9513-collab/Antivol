@@ -83,4 +83,23 @@ object CodeStore {
         save(c, KEY_RECOVERY, list.filterIndexed { i, _ -> i != found })
         return true
     }
+
+    // ----- code reçu par e-mail (valable 10 minutes, usage unique) -----
+
+    /** Crée un code de 8 chiffres à envoyer par e-mail. */
+    fun newMailCode(c: Context): String {
+        val code = String.format("%08d", SecureRandom().nextInt(100_000_000))
+        val until = System.currentTimeMillis() + 600_000
+        sp(c).edit().putString("mailcode", "$until;${makeEntry(code)}").apply()
+        return code
+    }
+
+    fun checkMailCode(c: Context, code: String): Boolean {
+        val raw = sp(c).getString("mailcode", "") ?: ""
+        val until = raw.substringBefore(";").toLongOrNull() ?: return false
+        if (System.currentTimeMillis() > until) return false
+        if (!matches(code, raw.substringAfter(";"))) return false
+        sp(c).edit().remove("mailcode").apply()
+        return true
+    }
 }

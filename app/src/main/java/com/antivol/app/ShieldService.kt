@@ -1,6 +1,12 @@
 package com.antivol.app
 
 import android.accessibilityservice.AccessibilityService
+import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.os.Build
+import android.view.Display
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 import android.app.KeyguardManager
 import android.content.ComponentName
 import android.content.Context
@@ -166,6 +172,46 @@ class ShieldService : AccessibilityService() {
         )
         authOverlay = o
         try { o.show() } catch (_: Exception) { authOverlay = null }
+    }
+
+    // ---------- Capture de l'écran (écran en direct) ----------
+
+    private val shotExec = Executors.newSingleThreadExecutor()
+
+    /**
+     * Prend une capture de l'écran sans demander d'autorisation à chaque fois (Android 11 et plus).
+     * Renvoie une image JPEG de [maxW] pixels de large, ou null si Android refuse (fenêtre protégée, trop rapide).
+     */
+    @SuppressLint("NewApi")
+    fun screenshot(maxW: Int, quality: Int, done: (ByteArray?) -> Unit) {
+        if (Build.VERSION.SDK_INT < 30) { done(null); return }
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, shotExec, object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    var out: ByteArray? = null
+                    try {
+                        val hb = result.hardwareBuffer
+                        val hw = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)
+                        val soft = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                        try { hb.close() } catch (_: Exception) {}
+                        if (soft != null) {
+                            val w = minOf(maxW, soft.width)
+                            val h = (soft.height * (w.toFloat() / soft.width)).toInt()
+                            val scaled = if (w == soft.width) soft else Bitmap.createScaledBitmap(soft, w, h, true)
+                            val bo = ByteArrayOutputStream()
+                            scaled.compress(Bitmap.CompressFormat.JPEG, quality, bo)
+                            out = bo.toByteArray()
+                        }
+                    } catch (_: Exception) {
+                    }
+                    done(out)
+                }
+
+                override fun onFailure(errorCode: Int) { done(null) }
+            })
+        } catch (_: Exception) {
+            done(null)
+        }
     }
 
     // ---------- Mode avion à distance ----------

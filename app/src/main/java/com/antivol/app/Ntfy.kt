@@ -36,7 +36,18 @@ import javax.net.ssl.SSLException
  * - Le flux est relancé tout de suite quand le téléphone change de réseau (Wi-Fi <-> 4G/5G).
  */
 object Ntfy {
-    private const val BASE = "https://ntfy.sh/"
+    private const val DEFAULT_BASE = "https://ntfy.sh/"
+
+    /** Serveur de messages. Vide dans les réglages = ntfy.sh ; sinon ton propre serveur ntfy. */
+    @Volatile var baseUrl = DEFAULT_BASE
+
+    fun configure(ctx: Context) {
+        var b = Prefs.str(ctx, "ntfy_base").trim()
+        if (b.isEmpty()) b = DEFAULT_BASE
+        if (!b.startsWith("http://") && !b.startsWith("https://")) b = "https://$b"
+        if (!b.endsWith("/")) b += "/"
+        baseUrl = b
+    }
 
     @Volatile var lastOk = 0L
     @Volatile var lastError = ""
@@ -117,7 +128,7 @@ object Ntfy {
     }
 
     private fun describe(e: Exception): String = when (e) {
-        is UnknownHostException -> "DNS : ntfy.sh introuvable (Wi-Fi qui filtre ?)"
+        is UnknownHostException -> "DNS : serveur de messages introuvable (Wi-Fi qui filtre ?)"
         is SocketTimeoutException -> "délai dépassé (réseau lent ou filtré)"
         is SSLException -> "connexion sécurisée refusée (Wi-Fi qui filtre ?)"
         else -> (e.javaClass.simpleName + (e.message?.let { " : $it" } ?: "")).take(120)
@@ -130,6 +141,7 @@ object Ntfy {
     /** À appeler une fois : relance les flux quand le téléphone change de réseau. */
     @Synchronized
     fun watchNetwork(ctx: Context) {
+        configure(ctx)
         if (watching) return
         try {
             val cm = ctx.applicationContext.getSystemService(ConnectivityManager::class.java) ?: return
@@ -168,7 +180,7 @@ object Ntfy {
             if (w > 0) try { Thread.sleep(w) } catch (_: InterruptedException) { return }
             try {
                 val rb = body.toRequestBody("text/plain; charset=utf-8".toMediaType())
-                val req = Request.Builder().url(BASE + topic).post(rb).apply {
+                val req = Request.Builder().url(baseUrl + topic).post(rb).apply {
                     headers.forEach { (k, v) -> header(k, v) }
                 }.build()
                 client.newCall(req).execute().use { r ->
@@ -194,7 +206,7 @@ object Ntfy {
         Thread {
             val net = "Réseau : $netType"
             val msg = try {
-                val req = Request.Builder().url(BASE + "v1/health").build()
+                val req = Request.Builder().url(baseUrl + "v1/health").build()
                 client.newCall(req).execute().use { r ->
                     if (r.isSuccessful) "$net · ntfy.sh joignable (DNS : $via)"
                     else "$net · ntfy.sh a répondu ${r.code}"
@@ -253,7 +265,7 @@ object Ntfy {
                 // Après une coupure, on reprend juste avant le dernier message reçu : aucun ordre perdu.
                 val from = if (first || lastTime == 0L) since else (lastTime - 5).toString()
                 try {
-                    val req = Request.Builder().url("$BASE$topic/json?since=$from").build()
+                    val req = Request.Builder().url("$baseUrl$topic/json?since=$from").build()
                     val c = streamClient.newCall(req)
                     call = c
                     c.execute().use { r ->

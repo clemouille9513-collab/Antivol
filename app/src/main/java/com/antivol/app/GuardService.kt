@@ -24,6 +24,15 @@ import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.media.FaceDetector
 import android.os.PowerManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.telephony.SmsManager
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.math.max
+import kotlin.math.sqrt
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -64,8 +73,8 @@ class GuardService : Service() {
     /** Signal de vie envoyé toutes les 5 minutes : la télécommande sait que le S22 est joignable. */
     private val hbRunnable = object : Runnable {
         override fun run() {
-            reply("hb|${if (Prefs.isLocked(this@GuardService)) 1 else 0}|${if (Prefs.isStolen(this@GuardService)) 1 else 0}|${battery()}|${Ntfy.netType}")
-            handler.postDelayed(this, 300_000)
+            reply("hb|${if (Prefs.isLocked(this@GuardService)) 1 else 0}|${if (Prefs.isStolen(this@GuardService)) 1 else 0}|${battery()}|${Ntfy.netType}|${Lan.localIp()}")
+            handler.postDelayed(this, 1_200_000)
         }
     }
 
@@ -73,9 +82,77 @@ class GuardService : Service() {
     private val trackRunnable = object : Runnable {
         override fun run() {
             if (Prefs.isEnabled(this@GuardService) && Prefs.isTracking(this@GuardService)) sendLocation()
-            handler.postDelayed(this, if (eco || battery() < 15) 1_800_000 else 600_000)
+            handler.postDelayed(this, if (eco || battery() < 15) 1_800_000 else 900_000)
         }
     }
+    private var camBusy = false
+    private var smsPending = false
+    private var screenOn = false
+    private var screenUntil = 0L
+    private var screenStarted = 0L
+    private var sensorMgr: SensorManager? = null
+    private var winN = 0
+    private var winSum = 0.0
+    private var winSq = 0.0
+    private var winStart = 0L
+    private var runWindows = 0
+    private var lastMotionCheck = 0L
+
+    /** Surveille l'écran : si le verrouillage est censé être là mais que sa fenêtre a disparu, on la remet. */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            try {
+                if ((Prefs.isLocked(this@GuardService) || Prefs.isStolen(this@GuardService)) && overlay?.isShown != true) {
+                    overlay?.hide()
+                    overlay = null
+                    showOverlay()
+                }
+            } catch (_: Exception) {}
+            handler.postDelayed(this, 3_000)
+        }
+    }
+
+    /** Détection de course : l'écart de l'accélération varie fortement pendant plusieurs secondes d'affilée. */
+    private val motionListener = object : SensorEventListener {
+        override fun onSensorChanged(e: SensorEvent) {
+            val x = e.values[0].toDouble(); val y = e.values[1].toDouble(); val z = e.values[2].toDouble()
+            val mag = sqrt(x * x + y * y + z * z)
+            val now = e.timestamp / 1_000_000L
+            if (winStart == 0L) winStart = now
+            winN++; winSum += mag; winSq += mag * mag
+            if (now - winStart >= 1000) {
+                val mean = winSum / winN
+                val sd = sqrt(max(winSq / winN - mean * mean, 0.0))
+                runWindows = if (sd > 3.5) runWindows + 1 else 0
+                winN = 0; winSum = 0.0; winSq = 0.0; winStart = now
+                if (runWindows >= 6) { runWindows = 0; onRunning() }
+            }
+        }
+        override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+    }
+
+    private val screenRunnable = object : Runnable {
+        override fun run() {
+            if (!screenOn) return
+            val now = System.currentTimeMillis()
+            if (now > screenUntil || (!Lan.watching() && now - screenStarted > 25_000)) {
+                screenOn = false
+                event("screen", "Écran en direct arrêté")
+                return
+            }
+            val shield = ShieldService.instance
+            if (shield == null) {
+                screenOn = false
+                event("screen", "Écran en direct impossible : la protection renforcée n'est pas active sur le S22")
+                return
+            }
+            shield.screenshot(540, 45) { bytes ->
+                if (bytes != null) Lan.pushFrame(Crypto.encryptBytes(Prefs.secret(this@GuardService), bytes))
+                handler.postDelayed(this, if (bytes != null) 300L else 400L)
+            }
+        }
+    }
+
     private var peekOverlay: PeekOverlay? = null
     private var peekBusy = false
     private var peekPausedUntil = 0L
@@ -190,6 +267,11 @@ class GuardService : Service() {
         }
 
         Ntfy.watchNetwork(this)
+        // Liaison directe sur le Wi-Fi : la télécommande parle au S22 sans passer par internet.
+        Lan.startServer(this) { body -> handleCommand(Prefs.secret(this), body) }
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, 3_000)
+        startMotionGuard()
         if (wifiLock == null) {
             try {
                 val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -274,6 +356,10 @@ class GuardService : Service() {
         overlay = null
         peekOverlay?.hide()
         peekOverlay = null
+        try { sensorMgr?.unregisterListener(motionListener) } catch (_: Exception) {}
+        sensorMgr = null
+        screenOn = false
+        Lan.stopServer()
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
         wakeLock = null
         try { wifiLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
@@ -292,13 +378,14 @@ class GuardService : Service() {
 
     // ---------- Ordres de la télécommande ----------
 
-    private fun handleCommand(secret: String, body: String) {
-        val plain = Crypto.decrypt(secret, body) ?: return
+    /** Renvoie faux si l'ordre est refusé (mauvaise clé, trop vieux) ; vrai s'il est accepté ou déjà exécuté. */
+    private fun handleCommand(secret: String, body: String): Boolean {
+        val plain = Crypto.decrypt(secret, body) ?: return false
         val p = plain.split("|", limit = 3)
-        if (p.size < 2) return
-        val ts = p[0].toLongOrNull() ?: return
-        if (abs(System.currentTimeMillis() / 1000 - ts) > 300) return
-        if (!Prefs.markSeen(this, plain)) return
+        if (p.size < 2) return false
+        val ts = p[0].toLongOrNull() ?: return false
+        if (abs(System.currentTimeMillis() / 1000 - ts) > 300) return false
+        if (!Prefs.markSeen(this, plain)) return true
         val cmd = p[1]
         val arg = p.getOrElse(2) { "" }.take(200)
 
@@ -312,6 +399,15 @@ class GuardService : Service() {
                 "photo" -> takePhoto(arg != "back", "Demande de la télécommande")
                 "free" -> release()
                 "avion" -> airplane(arg == "on")
+                "screen" -> screenCommand(arg == "on")
+                "shot" -> {
+                    val shield = ShieldService.instance
+                    if (shield == null) event("screen", "Capture impossible : la protection renforcée n'est pas active sur le S22")
+                    else shield.screenshot(720, 55) { b ->
+                        if (b == null) event("screen", "Capture d'écran impossible (écran protégé ou Android trop ancien)")
+                        else sendImage(b, "screen", "capture d'écran")
+                    }
+                }
                 "cfg" -> {
                     val kv = arg.split("=", limit = 2)
                     if (kv.size == 2) {
@@ -320,12 +416,25 @@ class GuardService : Service() {
                             "lock_airplane" -> Prefs.setBool(this, "lock_airplane", on)
                             "peek" -> Prefs.setPeekEnabled(this, on)
                             "track" -> Prefs.setTracking(this, on)
+                            "motion_guard" -> Prefs.setBool(this, "motion_guard", on)
                         }
                         event("cfg", "Réglage ${kv[0]} : ${if (on) "oui" else "non"}")
                     }
                 }
             }
-            reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}")
+            reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}|${Lan.localIp()}")
+        }
+        return true
+    }
+
+    private fun screenCommand(on: Boolean) {
+        if (!on) { screenOn = false; return }
+        val now = System.currentTimeMillis()
+        screenUntil = now + 600_000
+        if (!screenOn) {
+            screenOn = true
+            screenStarted = now
+            handler.post(screenRunnable)
         }
     }
 
@@ -343,11 +452,7 @@ class GuardService : Service() {
         }
     }
 
-    private fun reply(text: String) {
-        val secret = Prefs.secret(this)
-        val plain = "${System.currentTimeMillis() / 1000}|$text"
-        Ntfy.publish(Crypto.topic(secret, "rep"), Crypto.encrypt(secret, plain))
-    }
+    private fun reply(text: String) = Report.send(this, text)
 
     private fun event(type: String, detail: String) = reply("evt|$type|$detail")
 
@@ -358,6 +463,8 @@ class GuardService : Service() {
     private fun startStolen() {
         Prefs.setStolen(this, true)
         event("stolen", "Mode volé activé")
+        smsPending = true
+        handler.postDelayed({ if (smsPending) { smsPending = false; alertSms(null) } }, 60_000)
         triggerLock("Mode volé")
         showOverlay()
         overlay?.dim(true)
@@ -411,6 +518,7 @@ class GuardService : Service() {
     }
 
     private fun replyLocation(l: Location) {
+        if (smsPending) { smsPending = false; alertSms(l) }
         reply("loc|${l.latitude}|${l.longitude}|${l.accuracy.toInt()}")
     }
 
@@ -447,13 +555,16 @@ class GuardService : Service() {
         }
     }
 
-    private fun sendPhoto(bytes: ByteArray, front: Boolean, why: String) {
+    private fun sendPhoto(bytes: ByteArray, front: Boolean, why: String) =
+        sendImage(bytes, if (front) "front" else "back", why)
+
+    private fun sendImage(bytes: ByteArray, facing: String, why: String) {
         val secret = Prefs.secret(this)
         val enc = Crypto.encryptBytes(secret, bytes)
         val chunks = enc.chunked(2600)
         val id = System.currentTimeMillis() / 1000
-        val facing = if (front) "front" else "back"
-        event("photo", "Photo ${if (front) "avant" else "arrière"} envoyée ($why)")
+        val label = when (facing) { "front" -> "Photo avant"; "back" -> "Photo arrière"; else -> "Capture d'écran" }
+        event("photo", "$label envoyée ($why)")
         for ((i, c) in chunks.withIndex()) {
             reply("photo|$id|$i|${chunks.size}|$facing|$c")
         }
@@ -475,7 +586,7 @@ class GuardService : Service() {
     // ---------- Regards indiscrets ----------
 
     private fun scanForPeekers() {
-        if (!Prefs.isPeekEnabled(this) || peekBusy) return
+        if (!Prefs.isPeekEnabled(this) || peekBusy || camBusy) return
         if (System.currentTimeMillis() < peekPausedUntil) return
         if (Prefs.isLocked(this) || Prefs.isStolen(this)) return
         if (peekOverlay?.isShown == true) return
@@ -525,6 +636,8 @@ class GuardService : Service() {
 
     private fun scheduleLock(reason: String) {
         if (Prefs.trustedDevices(this).isEmpty()) return
+        // Petit truc caché : juste après un redémarrage volontaire, rien ne verrouille pendant quelques minutes.
+        if (System.currentTimeMillis() < Prefs.long(this, "boot_grace")) return
         pendingReason = reason
         handler.removeCallbacks(lockRunnable)
         handler.postDelayed(lockRunnable, Prefs.graceSeconds(this) * 1000L)
@@ -565,7 +678,8 @@ class GuardService : Service() {
             onUnlocked = {
                 overlay = null
                 release()
-            }
+            },
+            onMail = if (Prefs.str(this, "owner_email").isNotBlank()) ({ mailCode() }) else null
         ).also {
             it.show()
             if (Prefs.isStolen(this) || eco) it.dim(true)
@@ -608,11 +722,116 @@ class GuardService : Service() {
         // Seul un redémarrage du téléphone déclenche une vérification (voir "boot").
     }
 
-    /** Après un redémarrage : si aucun appareil de confiance n'est là au bout d'1 minute, on verrouille. */
+    /** Après un redémarrage : 4 minutes de répit, puis si aucun appareil de confiance n'est là, on verrouille. */
     private fun checkAfterBoot() {
+        val grace = 240_000L
+        Prefs.setLong(this, "boot_grace", System.currentTimeMillis() + grace)
         handler.postDelayed({
             if (connected.isEmpty()) scheduleLock("Aucun appareil de confiance après redémarrage")
-        }, 60_000)
+        }, grace + 2_000)
+    }
+
+    // ---------- Course : le propriétaire est-il toujours celui qui tient le téléphone ? ----------
+
+    private fun startMotionGuard() {
+        if (sensorMgr != null) return
+        try {
+            val sm = getSystemService(SensorManager::class.java) ?: return
+            val acc = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+            sm.registerListener(motionListener, acc, SensorManager.SENSOR_DELAY_UI, handler)
+            sensorMgr = sm
+        } catch (_: Exception) {}
+    }
+
+    private fun onRunning() {
+        val now = System.currentTimeMillis()
+        if (now - lastMotionCheck < 120_000) return
+        if (!Prefs.bool(this, "motion_guard", true) || !Prefs.isEnabled(this)) return
+        if (!Biometrics.faceEnrolled(this) && !Biometrics.voiceEnrolled(this)) return
+        if (Prefs.isLocked(this) || Prefs.isStolen(this) || camBusy || peekBusy) return
+        lastMotionCheck = now
+        event("motion", "Course détectée : vérification du visage et de la voix")
+        Thread {
+            try { verifyOwner() } catch (e: Exception) {
+                camBusy = false
+                event("motion", "Vérification impossible : ${e.message ?: e.javaClass.simpleName}")
+            }
+        }.start()
+    }
+
+    private fun verifyOwner() {
+        if (Biometrics.faceEnrolled(this) && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            camBusy = true
+            val latch = CountDownLatch(1)
+            var jpeg: ByteArray? = null
+            PhotoCapture(this).capture(true, 640) { b -> jpeg = b; latch.countDown() }
+            latch.await(12, TimeUnit.SECONDS)
+            camBusy = false
+            val b = jpeg
+            if (b != null) {
+                val r = Biometrics.checkFace(this, b)
+                val score = "%.2f".format(r.score)
+                when (r.kind) {
+                    Biometrics.Kind.OWNER -> { event("motion", "Visage reconnu (similarité $score) : tout va bien"); return }
+                    Biometrics.Kind.OTHER -> {
+                        event("face", "Visage inconnu (similarité $score, seuil ${Biometrics.FACE_THRESHOLD})")
+                        sendImage(b, "front", "visage inconnu pendant une course")
+                        handler.post { triggerLock("Visage inconnu pendant une course") }
+                        return
+                    }
+                    Biometrics.Kind.NONE -> event("motion", "Aucun visage devant la caméra avant")
+                }
+            }
+        }
+        if (Biometrics.voiceEnrolled(this) && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            val r = Biometrics.checkVoice(this, 4)
+            val score = "%.2f".format(r.score)
+            when (r.kind) {
+                Biometrics.Kind.OWNER -> event("motion", "Voix reconnue (similarité $score)")
+                Biometrics.Kind.OTHER -> {
+                    event("voice", "Voix inconnue (similarité $score, seuil ${Biometrics.VOICE_THRESHOLD})")
+                    handler.post { triggerLock("Voix inconnue pendant une course") }
+                }
+                Biometrics.Kind.NONE -> event("motion", "Personne ne parle : impossible de vérifier la voix")
+            }
+        }
+    }
+
+    // ---------- SMS d'alerte et code de secours par e-mail ----------
+
+    /** Envoie un SMS (avec la position si on l'a) au numéro de la personne et au numéro d'alerte choisi. */
+    private fun alertSms(l: Location?) {
+        val numbers = listOf(Prefs.str(this, "owner_phone"), Prefs.str(this, "alert_number"))
+            .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (numbers.isEmpty()) return
+        if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            event("sms", "SMS d'alerte impossible : l'autorisation SMS n'est pas donnée")
+            return
+        }
+        val pos = if (l != null) " Dernière position : https://maps.google.com/?q=${l.latitude},${l.longitude}" else " Position inconnue."
+        val text = "ANTIVOL : ce téléphone Samsung a été déclaré volé.$pos"
+        try {
+            @Suppress("DEPRECATION")
+            val sms = getSystemService(SmsManager::class.java) ?: SmsManager.getDefault()
+            for (n in numbers) sms.sendMultipartTextMessage(n, null, sms.divideMessage(text), null, null)
+            event("sms", "SMS d'alerte envoyé à ${numbers.size} numéro(s)")
+        } catch (e: Exception) {
+            event("sms", "SMS d'alerte impossible : ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    /** Envoie un code de secours par e-mail (via ntfy) et renvoie le message à afficher sur l'écran de blocage. */
+    private fun mailCode(): String {
+        val email = Prefs.str(this, "owner_email").trim()
+        if (email.isEmpty()) return "Aucun e-mail enregistré."
+        val code = CodeStore.newMailCode(this)
+        Ntfy.publish(
+            Crypto.topic(Prefs.secret(this), "mail"),
+            "Ton code de secours Antivol : $code (valable 10 minutes, une seule fois).",
+            mapOf("Email" to email, "Title" to "Code de secours Antivol")
+        )
+        event("mail", "Code de secours envoyé par e-mail")
+        return "Code envoyé à $email. Tape-le ci-dessus."
     }
 
     // ---------- Notification obligatoire d'un service permanent ----------
@@ -635,7 +854,9 @@ class GuardService : Service() {
             val cam = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
             // Android refuse caméra et position quand le service démarre en arrière-plan (redémarrage du téléphone) :
             // on essaie du plus complet au plus simple, sans jamais planter.
+            val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
             val tries = mutableListOf<Int>()
+            if (loc && cam && mic) tries += base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             if (loc && cam) tries += base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             if (loc) tries += base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             tries += base

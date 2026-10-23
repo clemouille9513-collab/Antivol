@@ -74,6 +74,10 @@ class RemoteActivity : ComponentActivity() {
     private var netInfo by mutableStateOf("")
     private var photo by mutableStateOf<Bitmap?>(null)
     private var photoInfo by mutableStateOf("")
+    private var lan: Lan.Client? = null
+    private var screenBmp by mutableStateOf<Bitmap?>(null)
+    private var screenInfo by mutableStateOf("")
+    @Volatile private var framesOn = false
     private var awaiting = false
     private var pinging = false
     private var token = 0
@@ -94,7 +98,7 @@ class RemoteActivity : ComponentActivity() {
             if (awaiting && t == token) {
                 awaiting = false
                 pinging = false
-                bot("Pas de réponse du S22. Sur le S22 : ouvre Antivol, appuie sur « Clé de liaison » (autorise Bluetooth et notifications), et vérifie qu'il a internet et la même clé que ici.")
+                bot("Pas de réponse du S22. Sur le S22 : ouvre Antivol, appuie sur « Clé de liaison » (autorise Bluetooth et notifications), et vérifie qu'il a internet et la même clé qu'ici. Si les deux téléphones sont sur le même Wi-Fi, regarde la ligne « direct Wi-Fi » dans l'état.")
             }
         }, 20000)
     }
@@ -130,9 +134,19 @@ class RemoteActivity : ComponentActivity() {
         else -> JSONObject().put("erreur", "outil inconnu").toString()
     }
 
-    /** Remplacé par l'écran en direct. */
-    private fun startScreen(): String =
-        JSONObject().put("erreur", "l'écran en direct n'est pas encore disponible").toString()
+    /** Écran en direct si le S22 est joignable sur le même Wi-Fi ; sinon une capture d'écran unique par internet. */
+    private fun startScreen(): String {
+        val l = lan
+        if (l != null && l.connected()) {
+            send("screen", "on")
+            startFrames()
+            screenInfo = "Connexion à l'écran du S22…"
+            return "L'écran du S22 s'affiche en direct dans la télécommande (carte « Écran du S22 »)."
+        }
+        send("shot", "")
+        screenInfo = "Pas de liaison Wi-Fi directe : capture unique demandée."
+        return "Pas de liaison Wi-Fi directe avec le S22 : le direct demande le même Wi-Fi. J'ai demandé une capture d'écran unique, elle s'affichera dans la télécommande."
+    }
 
     // ---------- Chatbot ----------
 
@@ -215,12 +229,64 @@ class RemoteActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         startSub()
+        startLan()
     }
 
     override fun onStop() {
         sub?.stop()
         sub = null
+        if (framesOn) send("screen", "off")
+        stopLan()
         super.onStop()
+    }
+
+    private fun startLan() {
+        val secret = Prefs.remoteSecret(this)
+        if (secret.isEmpty() || lan != null) return
+        lan = Lan.Client(this, secret) { body -> handleReply(secret, body) }.start()
+    }
+
+    private fun stopLan() {
+        framesOn = false
+        lan?.stop()
+        lan = null
+    }
+
+    // ---------- Écran en direct ----------
+
+    private fun startFrames() {
+        if (framesOn) return
+        framesOn = true
+        val secret = Prefs.remoteSecret(this)
+        Thread {
+            var since = 0L
+            var misses = 0
+            while (framesOn) {
+                val r = lan?.frame(since)
+                if (r == null) {
+                    misses++
+                    if (misses > 10) {
+                        framesOn = false
+                        runOnUiThread { screenInfo = "Direct Wi-Fi perdu : l'écran en direct est arrêté." }
+                        break
+                    }
+                    try { Thread.sleep(600) } catch (_: InterruptedException) {}
+                    continue
+                }
+                misses = 0
+                since = r.first
+                val data = r.second ?: continue
+                val bytes = Crypto.decryptBytes(secret, data) ?: continue
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+                runOnUiThread { screenBmp = bmp; screenInfo = "En direct · ${fmt.format(Date())}" }
+            }
+        }.start()
+    }
+
+    private fun stopScreen() {
+        framesOn = false
+        send("screen", "off")
+        screenInfo = "Écran en direct arrêté."
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
@@ -237,7 +303,7 @@ class RemoteActivity : ComponentActivity() {
         }
         LaunchedEffect(Unit) {
             while (true) {
-                netInfo = Ntfy.summary()
+                netInfo = Ntfy.summary() + "\n" + (lan?.status ?: "direct Wi-Fi : pas de clé enregistrée")
                 delay(3000)
             }
         }
@@ -338,6 +404,82 @@ class RemoteActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(14.dp)
                 ) { Text("Libérer") }
+
+                AppCard {
+                    Text("Écran du S22", fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("En direct sur le même Wi-Fi. Ailleurs : une capture à la demande.", color = cDim, fontSize = 13.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { bot(startScreen()) },
+                            modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)
+                        ) { Text("Voir") }
+                        OutlinedButton(
+                            onClick = { send("shot", ""); screenInfo = "Capture demandée…" },
+                            modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)
+                        ) { Text("Capture") }
+                        OutlinedButton(
+                            onClick = { stopScreen() },
+                            modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)
+                        ) { Text("Arrêter") }
+                    }
+                    screenBmp?.let { bmp ->
+                        Spacer(Modifier.height(8.dp))
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "Écran du S22",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        )
+                    }
+                    if (screenInfo.isNotEmpty()) Text(screenInfo, color = cDim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                    Text("Demande « Protection renforcée » activée sur le S22.", color = cDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                }
+
+                AppCard {
+                    var motion by remember { mutableStateOf(true) }
+                    var lanIp by remember { mutableStateOf(pref("lan_ip")) }
+                    var server by remember { mutableStateOf(pref("ntfy_base")) }
+                    Text("Liaison et vérification", fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Vérifier visage et voix quand le S22 détecte une course", color = cDim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = motion, onCheckedChange = {
+                            motion = it
+                            send("cfg", "motion_guard=${if (it) 1 else 0}")
+                        })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = lanIp,
+                        onValueChange = { lanIp = it.trim() },
+                        singleLine = true,
+                        label = { Text("IP du S22 (vide = automatique)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = server,
+                        onValueChange = { server = it.trim() },
+                        singleLine = true,
+                        label = { Text("Serveur de messages (vide = ntfy.sh)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            setPref("lan_ip", lanIp)
+                            setPref("ntfy_base", server)
+                            Ntfy.configure(this@RemoteActivity)
+                            stopLan(); startLan()
+                            sub?.stop(); sub = null; startSub()
+                            toast("Réglages réseau enregistrés")
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Enregistrer") }
+                }
 
                 photo?.let { bmp ->
                     AppCard {
@@ -518,6 +660,8 @@ class RemoteActivity : ComponentActivity() {
         sub?.stop()
         sub = null
         startSub()
+        stopLan()
+        startLan()
         // Test de liaison : on demande l'état au S22 et on attend sa réponse.
         pinging = true
         bot("Test de liaison avec le S22…")
@@ -529,85 +673,105 @@ class RemoteActivity : ComponentActivity() {
         val secret = Prefs.remoteSecret(this)
         if (secret.isEmpty()) { toast("Enregistre d'abord la clé de liaison"); return }
         val plain = "${System.currentTimeMillis() / 1000}|$cmd|$arg"
-        Ntfy.publish(Crypto.topic(secret, "cmd"), Crypto.encrypt(secret, plain))
-        runOnUiThread { info = "Ordre « $cmd » envoyé à ${fmt.format(Date())}. En attente du S22…" }
+        val enc = Crypto.encrypt(secret, plain)
+        Thread {
+            // D'abord en direct sur le Wi-Fi (instantané, sans limite) ; sinon par internet.
+            val direct = lan?.post(enc) == true
+            if (!direct) Ntfy.publish(Crypto.topic(secret, "cmd"), enc)
+            runOnUiThread {
+                info = "Ordre « $cmd » envoyé ${if (direct) "en direct (Wi-Fi)" else "par internet"} à ${fmt.format(Date())}. En attente du S22…"
+            }
+        }.start()
     }
 
     private fun startSub() {
         val secret = Prefs.remoteSecret(this)
         if (secret.isEmpty() || sub != null) return
-        sub = Ntfy.Subscription(Crypto.topic(secret, "rep"), "12h") { body ->
-            val plain = Crypto.decrypt(secret, body) ?: return@Subscription
-            val p = plain.split("|")
-            if (p.size < 2) return@Subscription
-            val ts = p[0].toLongOrNull() ?: return@Subscription
-            when (p[1]) {
-                "loc" -> if (p.size >= 5) {
-                    Prefs.addHistory(this, "$ts,${p[2]},${p[3]},${p[4]}")
-                    refreshPath()
-                    waiters["loc"]?.complete(
-                        JSONObject().put("latitude", p[2]).put("longitude", p[3]).put("precision_m", p[4]).toString()
-                    )
+        sub = Ntfy.Subscription(Crypto.topic(secret, "rep"), "12h") { body -> handleReply(secret, body) }.start()
+    }
+
+    private val seenBodies = ArrayDeque<Int>()
+
+    /** Traite un message du S22, qu'il arrive par internet (ntfy) ou en direct sur le Wi-Fi. */
+    private fun handleReply(secret: String, body: String) {
+        synchronized(seenBodies) {
+            val h = body.hashCode()
+            if (h in seenBodies) return
+            seenBodies.addLast(h)
+            if (seenBodies.size > 500) seenBodies.removeFirst()
+        }
+        val plain = Crypto.decrypt(secret, body) ?: return
+        val p = plain.split("|")
+        if (p.size < 2) return
+        val ts = p[0].toLongOrNull() ?: return
+        when (p[1]) {
+            "loc" -> if (p.size >= 5) {
+                Prefs.addHistory(this, "$ts,${p[2]},${p[3]},${p[4]}")
+                refreshPath()
+                waiters["loc"]?.complete(
+                    JSONObject().put("latitude", p[2]).put("longitude", p[3]).put("precision_m", p[4]).toString()
+                )
+            }
+            "hb" -> if (p.size >= 6) {
+                p.getOrNull(6)?.let { lan?.hint(it) }
+                runOnUiThread {
+                    info = "Signal du S22 à ${fmt.format(Date(ts * 1000))} (${p[5]})\n" +
+                        "Verrouillé : ${if (p[2] == "1") "oui" else "non"}\n" +
+                        "Mode volé : ${if (p[3] == "1") "oui" else "non"}\n" +
+                        "Batterie : ${p[4]} %"
                 }
-                "hb" -> if (p.size >= 6) {
-                    runOnUiThread {
-                        info = "Signal du S22 à ${fmt.format(Date(ts * 1000))} (${p[5]})\n" +
-                            "Verrouillé : ${if (p[2] == "1") "oui" else "non"}\n" +
-                            "Mode volé : ${if (p[3] == "1") "oui" else "non"}\n" +
-                            "Batterie : ${p[4]} %"
-                    }
-                }
-                "photo" -> if (p.size >= 7) {
-                    val id = p[2]
-                    val idx = p[3].toIntOrNull() ?: return@Subscription
-                    val n = p[4].toIntOrNull() ?: return@Subscription
-                    if (n <= 0 || n > 400) return@Subscription
-                    val parts = synchronized(assembling) { assembling.getOrPut(id) { arrayOfNulls(n) } }
-                    if (idx in parts.indices) parts[idx] = p.drop(6).joinToString("|")
-                    if (parts.all { it != null }) {
-                        synchronized(assembling) { assembling.remove(id) }
-                        val bytes = Crypto.decryptBytes(secret, parts.joinToString(""))
-                        val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-                        if (bmp != null) {
-                            runOnUiThread {
-                                photo = bmp
-                                photoInfo = "${if (p[5] == "front") "Caméra avant" else "Caméra arrière"} · ${fmt.format(Date(ts * 1000))}"
-                            }
-                            waiters["photo"]?.complete(
-                                JSONObject().put("ok", true).put("photo", "reçue, elle est affichée dans la télécommande").toString()
-                            )
+            }
+            "photo" -> if (p.size >= 7) {
+                val id = p[2]
+                val idx = p[3].toIntOrNull() ?: return
+                val n = p[4].toIntOrNull() ?: return
+                if (n <= 0 || n > 400) return
+                val parts = synchronized(assembling) { assembling.getOrPut(id) { arrayOfNulls(n) } }
+                if (idx in parts.indices) parts[idx] = p.drop(6).joinToString("|")
+                if (parts.all { it != null }) {
+                    synchronized(assembling) { assembling.remove(id) }
+                    val bytes = Crypto.decryptBytes(secret, parts.joinToString(""))
+                    val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                    if (bmp != null) {
+                        runOnUiThread {
+                            photo = bmp
+                            photoInfo = "${when (p[5]) { "front" -> "Caméra avant"; "back" -> "Caméra arrière"; else -> "Capture d'écran" }} · ${fmt.format(Date(ts * 1000))}"
                         }
-                    }
-                }
-                "evt" -> if (p.size >= 4) {
-                    val detail = p.drop(3).joinToString("|")
-                    if (p[2] == "photo" && detail.contains("impossible")) {
-                        waiters["photo"]?.complete(JSONObject().put("erreur", detail).toString())
-                    }
-                    if (p[2] == "airplane") bot("S22 : $detail")
-                }
-                "ack" -> if (p.size >= 6) {
-                    val answer = JSONObject().put("ok", true).put("ordre", p[2])
-                        .put("verrouille", p[3] == "1").put("mode_vole", p[4] == "1").put("batterie_pourcent", p[5].toIntOrNull() ?: -1)
-                        .toString()
-                    waiters["ack:${p[2]}"]?.complete(answer)
-                    if (awaiting) {
-                        awaiting = false
-                        val link = if (pinging) "Liaison réussie ! " else ""
-                        pinging = false
-                        val msg = link + "Le S22 a répondu : ${if (p[3] == "1") "verrouillé" else "libre"}, " +
-                            "mode volé ${if (p[4] == "1") "oui" else "non"}, batterie ${p[5]} %."
-                        bot(msg)
-                    }
-                    runOnUiThread {
-                        info = "S22 a reçu « ${p[2]} » à ${fmt.format(Date(ts * 1000))}\n" +
-                            "Verrouillé : ${if (p[3] == "1") "oui" else "non"}\n" +
-                            "Mode volé : ${if (p[4] == "1") "oui" else "non"}\n" +
-                            "Batterie : ${p[5]} %"
+                        waiters["photo"]?.complete(
+                            JSONObject().put("ok", true).put("photo", "reçue, elle est affichée dans la télécommande").toString()
+                        )
                     }
                 }
             }
-        }.start()
+            "evt" -> if (p.size >= 4) {
+                val detail = p.drop(3).joinToString("|")
+                if (p[2] == "photo" && detail.contains("impossible")) {
+                    waiters["photo"]?.complete(JSONObject().put("erreur", detail).toString())
+                }
+                if (p[2] == "airplane") bot("S22 : $detail")
+            }
+            "ack" -> if (p.size >= 6) {
+                p.getOrNull(6)?.let { lan?.hint(it) }
+                val answer = JSONObject().put("ok", true).put("ordre", p[2])
+                    .put("verrouille", p[3] == "1").put("mode_vole", p[4] == "1").put("batterie_pourcent", p[5].toIntOrNull() ?: -1)
+                    .toString()
+                waiters["ack:${p[2]}"]?.complete(answer)
+                if (awaiting) {
+                    awaiting = false
+                    val link = if (pinging) "Liaison réussie ! " else ""
+                    pinging = false
+                    val msg = link + "Le S22 a répondu : ${if (p[3] == "1") "verrouillé" else "libre"}, " +
+                        "mode volé ${if (p[4] == "1") "oui" else "non"}, batterie ${p[5]} %."
+                    bot(msg)
+                }
+                runOnUiThread {
+                    info = "S22 a reçu « ${p[2]} » à ${fmt.format(Date(ts * 1000))}\n" +
+                        "Verrouillé : ${if (p[3] == "1") "oui" else "non"}\n" +
+                        "Mode volé : ${if (p[4] == "1") "oui" else "non"}\n" +
+                        "Batterie : ${p[5]} %"
+                }
+            }
+        }
     }
 
     private fun history(): List<Triple<Long, Double, Double>> =
