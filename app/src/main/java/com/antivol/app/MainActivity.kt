@@ -415,6 +415,7 @@ private fun Home(act: MainActivity, tick: Int) {
                 var email by remember { mutableStateOf(Prefs.str(act, "owner_email")) }
                 var phone by remember { mutableStateOf(Prefs.str(act, "owner_phone")) }
                 var alertNum by remember { mutableStateOf(Prefs.str(act, "alert_number")) }
+                var freeCode by remember { mutableStateOf(Prefs.str(act, "remote_code")) }
                 Text("Ces infos restent sur ce téléphone. L'e-mail sert à recevoir un code de secours depuis l'écran de blocage. Les numéros reçoivent un SMS avec la position quand tu actives « Volé ».",
                     color = cDim, fontSize = 13.sp)
                 Spacer(Modifier.height(8.dp))
@@ -436,9 +437,15 @@ private fun Home(act: MainActivity, tick: Int) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
                 )
                 Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = freeCode, onValueChange = { freeCode = it.trim().take(40) }, singleLine = true,
+                    label = { Text("Code pour libérer le S22 à distance (vide = aucun)") }, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
                         verifyThen {
+                            Prefs.setStr(act, "remote_code", freeCode)
                             Prefs.setStr(act, "owner_email", email)
                             Prefs.setStr(act, "owner_phone", phone)
                             Prefs.setStr(act, "alert_number", alertNum)

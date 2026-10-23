@@ -397,7 +397,11 @@ class GuardService : Service() {
                 "say" -> stolen().say(arg)
                 "locate" -> sendLocation()
                 "photo" -> takePhoto(arg != "back", "Demande de la télécommande")
-                "free" -> release()
+                "free" -> {
+                    val need = Prefs.str(this, "remote_code")
+                    if (need.isNotEmpty() && arg != need) event("free", "Libération refusée : code incorrect")
+                    else release()
+                }
                 "avion" -> airplane(arg == "on")
                 "screen" -> screenCommand(arg == "on")
                 "shot" -> {

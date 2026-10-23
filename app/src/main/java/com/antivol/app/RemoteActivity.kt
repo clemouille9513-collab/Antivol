@@ -122,7 +122,7 @@ class RemoteActivity : ComponentActivity() {
 
     private fun runTool(name: String, a: JSONObject): String = when (name) {
         "lock" -> waitFor("ack:lock", 25000) { send("lock", "") }
-        "free" -> waitFor("ack:free", 25000) { send("free", "") }
+        "free" -> waitFor("ack:free", 25000) { send("free", Prefs.str(this, "remote_free_code")) }
         "alarm" -> waitFor("ack:alarm", 25000) { send("alarm", "") }
         "stolen" -> waitFor("ack:stolen", 25000) { send("stolen", "") }
         "status" -> waitFor("ack:status", 25000) { send("status", "") }
@@ -204,7 +204,7 @@ class RemoteActivity : ComponentActivity() {
             has("avion") -> order("avion", if (has("coupe", "desactive", "enleve", "off")) "off" else "on", "J'envoie l'ordre mode avion. Attention : en l'activant, le S22 n'est plus joignable.")
             has("ecran en direct", "voir l'ecran", "voir ecran") -> bot(startScreen())
             has("vole") -> order("stolen", "", "Mode volé envoyé : le S22 se verrouille, parle en boucle et passe en mode éco.")
-            has("libere", "arrete", "stop", "deverrouille", "debloque") -> order("free", "", "Je libère le S22 : alarme et blocage arrêtés.")
+            has("libere", "arrete", "stop", "deverrouille", "debloque") -> order("free", Prefs.str(this, "remote_free_code"), "Je libère le S22 : alarme et blocage arrêtés.")
             has("verrouill", "bloque") -> order("lock", "", "Je verrouille le S22.")
             has("sonne", "alarme", "sirene", "bruit") -> order("alarm", "", "Je fais sonner le S22 au maximum.")
             has("batterie", "charge", "niveau") -> order("status", "", "Je demande la batterie du S22.")
@@ -294,6 +294,7 @@ class RemoteActivity : ComponentActivity() {
     @Composable
     private fun Screen() {
         var sayText by remember { mutableStateOf("") }
+        var freeCode by remember { mutableStateOf(Prefs.str(this, "remote_free_code")) }
         var armed by remember { mutableStateOf(false) }
         LaunchedEffect(armed) {
             if (armed) {
@@ -399,8 +400,15 @@ class RemoteActivity : ComponentActivity() {
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Photo arrière") }
                 }
+                OutlinedTextField(
+                    value = freeCode,
+                    onValueChange = { freeCode = it.trim().take(40); Prefs.setStr(this@RemoteActivity, "remote_free_code", freeCode) },
+                    singleLine = true,
+                    label = { Text("Code de libération (choisi sur le S22)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 FilledTonalButton(
-                    onClick = { send("free", "") },
+                    onClick = { send("free", freeCode) },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(14.dp)
                 ) { Text("Libérer") }
