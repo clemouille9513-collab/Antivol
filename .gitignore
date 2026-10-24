@@ -4,3 +4,5 @@ local.properties
 app/src/main/assets/MobileFaceNet.tflite
 app/src/main/assets/wespeaker_en_voxceleb_resnet34.onnx
 app/src/main/jniLibs/
+app/src/main/assets/leaflet.js
+app/src/main/assets/leaflet.css

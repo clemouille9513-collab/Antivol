@@ -741,7 +741,8 @@ class RemoteActivity : ComponentActivity() {
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageFinished(view: WebView, url: String?) { mapReady = true; pushMap(view) }
                                 }
-                                loadDataWithBaseURL("https://antivol.local/", MAP_HTML, "text/html", "utf-8", null)
+                                setBackgroundColor(0xFFE5E3DF.toInt())
+                                loadUrl("file:///android_asset/map.html")
                             }
                         },
                         update = { v -> if (mapReady) { @Suppress("UNUSED_VARIABLE") val t = points; pushMap(v) } },
@@ -954,25 +955,3 @@ class RemoteActivity : ComponentActivity() {
     }
 }
 
-
-/** Carte OpenStreetMap, avec point rouge, cercle de précision et trajet. */
-private const val MAP_HTML = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<style>html,body,#m{height:100%;margin:0}</style></head><body><div id="m"></div><script>
-var map=L.map('m').setView([46.6,2.4],5);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'OpenStreetMap'}).addTo(map);
-var line=L.polyline([],{color:'#0a3cff',weight:4,opacity:0.7}).addTo(map);
-var dot=null,circ=null,first=true;
-function setTrack(a,follow){
-  if(!a.length)return;
-  line.setLatLngs(a.map(function(p){return [p[0],p[1]];}));
-  var l=a[a.length-1],ll=[l[0],l[1]],r=l[2]||20;
-  if(!dot){
-    dot=L.circleMarker(ll,{radius:9,color:'#ffffff',weight:3,fillColor:'#e11d2e',fillOpacity:1}).addTo(map);
-    circ=L.circle(ll,{radius:r,color:'#0a3cff',weight:1,fillColor:'#0a3cff',fillOpacity:0.12}).addTo(map);
-  }else{dot.setLatLng(ll);circ.setLatLng(ll);circ.setRadius(r);}
-  if(first){map.setView(ll,17);first=false;}
-  else if(follow){map.panTo(ll);}
-}
-</script></body></html>"""

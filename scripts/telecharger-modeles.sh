@@ -40,5 +40,10 @@ if ! { [ -f "$JNI/libonnxruntime.so" ] && check "$JNI/libonnxruntime.so" 33847ad
   check "$JNI/libonnxruntime.so" 33847ad43bffe204699fd4a27f7f3603452a8cdaf2f9a44983a0bc31ffcf2da1
   check "$JNI/libsherpa-onnx-jni.so" 3c6492ea91ea68fd3b72b9495efdde6dd913f6b58c387e3b07389cf335f4d26f
 fi
+# Carte : Leaflet est copié dans l'appli (pas de téléchargement au moment d'ouvrir la carte).
+if [ ! -f "$ASSETS/leaflet.js" ] || [ ! -f "$ASSETS/leaflet.css" ]; then
+  (cd "$TMP" && npm pack leaflet@1.9.4 --silent >/dev/null && tar -xzf leaflet-1.9.4.tgz)
+  cp "$TMP/package/dist/leaflet.js" "$TMP/package/dist/leaflet.css" "$ASSETS/"
+fi
 rm -rf "$TMP"
 echo "Modèles prêts."
