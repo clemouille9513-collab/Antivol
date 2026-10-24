@@ -325,6 +325,7 @@
     } else if (type === "ack" && p.length >= 6) {
       if (ts >= (status.ackTs || 0)) {
         status.ackTs = ts; status.locked = p[3] === "1"; status.stolen = p[4] === "1"; status.batt = parseInt(p[5], 10);
+        if (p.length > 7) { status.alarm = p[7] === "1"; renderAlarm(); }
       }
       touch(ts); changed = true;
     } else if (type === "hb" && p.length >= 6) {
@@ -388,8 +389,15 @@
       toast(r.ok ? "Ordre « " + cmd + " » envoyé au S22" : "Envoi refusé (" + r.status + ")");
     } catch (e) { toast("Envoi impossible : pas de connexion"); }
   }
+  function renderAlarm() {
+    var b = document.querySelector('[data-cmd="alarm"]');
+    if (b) b.innerHTML = (status.alarm ? "Arrêter l'alarme" : "Alarme") + "<small>" + (status.alarm ? "La sirène sonne" : "Sirène au maximum") + "</small>";
+  }
   document.querySelectorAll(".act[data-cmd]").forEach(function (b) {
-    b.addEventListener("click", function () { send(b.dataset.cmd, b.dataset.arg || ""); });
+    b.addEventListener("click", function () {
+      if (b.dataset.cmd === "alarm") { status.alarm = !status.alarm; renderAlarm(); send("alarm", status.alarm ? "on" : "off"); return; }
+      send(b.dataset.cmd, b.dataset.arg || "");
+    });
   });
   $("#sayBtn").onclick = function () { var t = $("#sayText").value.trim(); if (t) { send("say", t); $("#sayText").value = ""; } };
   $("#sayText").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#sayBtn").click(); });

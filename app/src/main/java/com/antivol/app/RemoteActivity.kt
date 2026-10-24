@@ -36,6 +36,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,6 +69,9 @@ class RemoteActivity : ComponentActivity() {
     private var sub: Ntfy.Subscription? = null
     private var info by mutableStateOf("Aucune réponse du S22 pour l'instant.")
     private var points by mutableStateOf<List<Pair<Double, Double>>>(emptyList())
+    private var alarmOn by mutableStateOf(false)
+    private var liveOn by mutableStateOf(false)
+    private var mapReady by mutableStateOf(false)
     private var keyText by mutableStateOf("")
     private val fmt = SimpleDateFormat("HH:mm:ss", Locale.FRANCE)
     private val chat = mutableStateListOf<Pair<Boolean, String>>()
@@ -123,7 +128,7 @@ class RemoteActivity : ComponentActivity() {
     private fun runTool(name: String, a: JSONObject): String = when (name) {
         "lock" -> waitFor("ack:lock", 25000) { send("lock", "") }
         "free" -> waitFor("ack:free", 25000) { send("free", Prefs.str(this, "remote_free_code")) }
-        "alarm" -> waitFor("ack:alarm", 25000) { send("alarm", "") }
+        "alarm" -> waitFor("ack:alarm", 25000) { send("alarm", if (a.optBoolean("on", true)) "on" else "off") }
         "stolen" -> waitFor("ack:stolen", 25000) { send("stolen", "") }
         "status" -> waitFor("ack:status", 25000) { send("status", "") }
         "locate" -> waitFor("loc", 45000) { send("locate", "") }
@@ -265,11 +270,14 @@ class RemoteActivity : ComponentActivity() {
                 }
                 any("direct", "ecran", "regard", "montre") && any("direct", "voir", "vois", "regard", "affich", "montre", "ecran") && !any("verrouill") -> { bot(startScreen()); true }
                 any("vole", "volee", "vol") && !any("volume") -> { order("stolen", "", "Mode volé envoyé : le S22 se verrouille, parle en boucle et passe en mode éco."); true }
+                any("alarme", "sirene", "sonnerie", "bruit") && any("arrete", "stoppe", "stop", "coupe", "eteins", "desactiv", "tais", "silence") -> {
+                    order("alarm", "off", "J'arrête la sirène du S22."); true
+                }
                 any("libere", "liberer", "deverrouill", "debloqu", "arrete", "stoppe", "stop", "tais", "silence", "coupe") -> {
                     order("free", Prefs.str(this, "remote_free_code"), "Je libère le S22 : alarme et blocage arrêtés."); true
                 }
                 any("verrouill", "bloqu", "ferme", "protege", "securis") -> { order("lock", "", "Je verrouille le S22."); true }
-                any("sonne", "sonner", "alarme", "sirene", "bruit", "cri", "hurle", "fort") -> { order("alarm", "", "Je fais sonner le S22 au maximum."); true }
+                any("sonne", "sonner", "alarme", "sirene", "bruit", "cri", "hurle", "fort") -> { order("alarm", "on", "Je fais sonner le S22 au maximum."); true }
                 any("batterie", "charge", "niveau", "pourcent", "reste") -> { order("status", "", "Je demande la batterie du S22."); true }
                 any("photo", "selfie", "camera", "cheese", "prends") -> {
                     val back = any("arriere", "derriere", "dos", "principale")
@@ -305,6 +313,7 @@ class RemoteActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        if (liveOn) { liveOn = false; send("live", "off") }
         sub?.stop()
         sub = null
         if (framesOn) send("screen", "off")
@@ -443,10 +452,10 @@ class RemoteActivity : ComponentActivity() {
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Verrouiller") }
                     FilledTonalButton(
-                        onClick = { send("alarm", "") },
+                        onClick = { alarmOn = !alarmOn; send("alarm", if (alarmOn) "on" else "off") },
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(14.dp)
-                    ) { Text("Alarme") }
+                    ) { Text(if (alarmOn) "Arrêter l'alarme" else "Alarme") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilledTonalButton(
@@ -712,22 +721,54 @@ class RemoteActivity : ComponentActivity() {
                     }
                 }
 
-                Section("TRAJET")
+                Section("POSITION")
                 AppCard {
+                    @Suppress("UNUSED_VARIABLE") val refresh = points
+                    val lastFix = history().lastOrNull()
+                    val acc = Prefs.history(this@RemoteActivity).lastOrNull()?.split(",")?.getOrNull(3)?.toDoubleOrNull()
+                    Text(
+                        if (lastFix == null) "Aucune position reçue pour l'instant."
+                        else "Dernière mesure : il y a ${formatAge(System.currentTimeMillis() / 1000 - lastFix.first)}" +
+                            (if (acc != null && acc > 0) " · précision ±${acc.toInt()} m" else ""),
+                        fontSize = 14.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
                     AndroidView(
-                        factory = { PathView(it) },
-                        update = { it.points = points },
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageFinished(view: WebView, url: String?) { mapReady = true; pushMap(view) }
+                                }
+                                loadDataWithBaseURL("https://antivol.local/", MAP_HTML, "text/html", "utf-8", null)
+                            }
+                        },
+                        update = { v -> if (mapReady) { @Suppress("UNUSED_VARIABLE") val t = points; pushMap(v) } },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(260.dp)
+                            .height(340.dp)
                             .clip(RoundedCornerShape(14.dp))
                     )
                     Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilledTonalButton(
+                            onClick = { send("locate", "") },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) { Text("Localiser") }
+                        FilledTonalButton(
+                            onClick = { liveOn = !liveOn; send("live", if (liveOn) "on" else "off") },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) { Text(if (liveOn) "Arrêter le suivi" else "Suivre en direct") }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = { openMaps() },
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Ouvrir la dernière position dans Maps") }
+                    ) { Text("Ouvrir dans Google Maps") }
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -839,6 +880,7 @@ class RemoteActivity : ComponentActivity() {
             }
             "ack" -> if (p.size >= 6) {
                 p.getOrNull(6)?.let { lan?.hint(it) }
+                p.getOrNull(7)?.let { v -> runOnUiThread { alarmOn = v == "1" } }
                 val answer = JSONObject().put("ok", true).put("ordre", p[2])
                     .put("verrouille", p[3] == "1").put("mode_vole", p[4] == "1").put("batterie_pourcent", p[5].toIntOrNull() ?: -1)
                     .toString()
@@ -872,6 +914,25 @@ class RemoteActivity : ComponentActivity() {
             }
         }
 
+    private fun formatAge(sec: Long): String = when {
+        sec < 5 -> "quelques secondes"
+        sec < 90 -> "$sec s"
+        sec < 5400 -> "${sec / 60} min"
+        else -> "${sec / 3600} h"
+    }
+
+    /** Envoie les positions à la carte (point rouge, cercle de précision, trajet). */
+    private fun pushMap(v: WebView) {
+        val fixes = Prefs.history(this).mapNotNull {
+            val f = it.split(",")
+            val la = f.getOrNull(1)?.toDoubleOrNull()
+            val lo = f.getOrNull(2)?.toDoubleOrNull()
+            if (la == null || lo == null) null else "[$la,$lo,${f.getOrNull(3)?.toDoubleOrNull() ?: 0.0}]"
+        }.takeLast(150)
+        if (fixes.isEmpty()) return
+        v.evaluateJavascript("setTrack([${fixes.joinToString(",")}], $liveOn)", null)
+    }
+
     private fun refreshPath() {
         val pts = history().map { Pair(it.second, it.third) }
         runOnUiThread { points = pts }
@@ -892,3 +953,26 @@ class RemoteActivity : ComponentActivity() {
         }
     }
 }
+
+
+/** Carte OpenStreetMap, avec point rouge, cercle de précision et trajet. */
+private const val MAP_HTML = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>html,body,#m{height:100%;margin:0}</style></head><body><div id="m"></div><script>
+var map=L.map('m').setView([46.6,2.4],5);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'OpenStreetMap'}).addTo(map);
+var line=L.polyline([],{color:'#0a3cff',weight:4,opacity:0.7}).addTo(map);
+var dot=null,circ=null,first=true;
+function setTrack(a,follow){
+  if(!a.length)return;
+  line.setLatLngs(a.map(function(p){return [p[0],p[1]];}));
+  var l=a[a.length-1],ll=[l[0],l[1]],r=l[2]||20;
+  if(!dot){
+    dot=L.circleMarker(ll,{radius:9,color:'#ffffff',weight:3,fillColor:'#e11d2e',fillOpacity:1}).addTo(map);
+    circ=L.circle(ll,{radius:r,color:'#0a3cff',weight:1,fillColor:'#0a3cff',fillOpacity:0.12}).addTo(map);
+  }else{dot.setLatLng(ll);circ.setLatLng(ll);circ.setRadius(r);}
+  if(first){map.setView(ll,17);first=false;}
+  else if(follow){map.panTo(ll);}
+}
+</script></body></html>"""
