@@ -131,6 +131,10 @@ class RemoteActivity : ComponentActivity() {
         "say" -> waitFor("ack:say", 25000) { send("say", a.optString("text").take(200)) }
         "airplane" -> waitFor("ack:avion", 25000) { send("avion", if (a.optBoolean("on")) "on" else "off") }
         "screen" -> startScreen()
+        "open_app" -> waitFor("evt:act", 30000) { send("app", a.optString("name").take(100)) }
+        "open_url" -> waitFor("evt:act", 30000) { send("url", a.optString("url").take(200)) }
+        "torch" -> waitFor("evt:act", 30000) { send("torch", if (a.optBoolean("on")) "on" else "off") }
+        "volume" -> waitFor("evt:act", 30000) { send("volume", a.optInt("percent", 50).toString()) }
         else -> JSONObject().put("erreur", "outil inconnu").toString()
     }
 
@@ -232,6 +236,22 @@ class RemoteActivity : ComponentActivity() {
 
             fun any(vararg r: String) = hasWord(w, *r)
             val handled = when {
+                w[0] in listOf("ouvre", "ouvrir", "lance", "lancer", "demarre", "va") && w.size > 1 -> {
+                    val target = c.replace(Regex("(?i)^\\s*(ouvre|ouvrir|lance|lancer|démarre|demarre|va sur|va)\\s+(l'appli(cation)?|le site|la page|sur)?\\s*"), "").trim()
+                    if (target.contains(".") && !target.contains(" ")) order("url", target, "J'ouvre $target sur le S22.")
+                    else order("app", target, "J'ouvre « $target » sur le S22.")
+                    true
+                }
+                any("lampe", "torche", "lumiere", "flash") -> {
+                    val off = any("eteins", "eteint", "coupe", "ferme", "off")
+                    order("torch", if (off) "off" else "on", if (off) "J'éteins la lampe du S22." else "J'allume la lampe du S22.")
+                    true
+                }
+                any("volume", "son") && Regex("\\d+").containsMatchIn(n) -> {
+                    val v = Regex("\\d+").find(n)!!.value
+                    order("volume", v, "Je règle le volume du S22 à $v %.")
+                    true
+                }
                 any("avion") -> {
                     val off = any("coupe", "desactiv", "enlev", "retir", "eteins", "stoppe")
                     order("avion", if (off) "off" else "on",
@@ -260,7 +280,7 @@ class RemoteActivity : ComponentActivity() {
             if (handled) done++
         }
         if (done == 0) {
-            bot("Je n'ai pas compris. Je sais faire : verrouille, libère, fais sonner, batterie, où est mon téléphone, photo (avant ou arrière), dis … (phrase à voix haute), volé, mode avion, écran en direct. Tu peux en enchaîner plusieurs : « verrouille et fais sonner ».")
+            bot("Je n'ai pas compris. Je sais faire : verrouille, libère, fais sonner, ouvre YouTube, lampe, volume 50, batterie, où est mon téléphone, photo (avant ou arrière), dis … (phrase à voix haute), volé, mode avion, écran en direct. Tu peux en enchaîner plusieurs : « verrouille et fais sonner ».")
         }
     }
 
@@ -610,8 +630,8 @@ class RemoteActivity : ComponentActivity() {
                         TextButton(onClick = { cfg = !cfg }) { Text(if (cfg) "Fermer" else "Réglages IA", color = cBlue) }
                     }
                     Text(
-                        if (connected) "Connecté à ${if (provider == "anthropic") "Claude" else "GPT"} : il exécute tes ordres sur le S22."
-                        else "Pas de clé : mode simple (mots-clés). Ajoute une clé dans les réglages pour parler librement.",
+                        if (connected) "Connecté à ${when (provider) { "anthropic" -> "Claude"; "gemini" -> "Gemini"; else -> "GPT" }} : il exécute tes ordres sur le S22."
+                        else "Pas de clé : mode gratuit simple. Pour une vraie IA gratuite : Réglages IA, choisis Gemini et colle ta clé (aistudio.google.com/apikey).",
                         color = cDim, fontSize = 13.sp
                     )
                     if (cfg) {
@@ -622,6 +642,9 @@ class RemoteActivity : ComponentActivity() {
                             if (provider == "anthropic") Button(onClick = {}, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("Claude") }
                             else OutlinedButton(onClick = { provider = "anthropic"; setPref("ai_provider", "anthropic") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("Claude") }
                         }
+                        Spacer(Modifier.height(8.dp))
+                        if (provider == "gemini") Button(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Text("Gemini (gratuit)") }
+                        else OutlinedButton(onClick = { provider = "gemini"; setPref("ai_provider", "gemini") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Text("Gemini (gratuit)") }
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = aiKey,
@@ -637,7 +660,7 @@ class RemoteActivity : ComponentActivity() {
                             value = aiModel,
                             onValueChange = { aiModel = it.trim() },
                             singleLine = true,
-                            label = { Text(if (provider == "anthropic") "Modèle (vide = claude-haiku-5-5)" else "Modèle (vide = gpt-4o-mini)") },
+                            label = { Text(when (provider) { "anthropic" -> "Modèle (vide = claude-haiku-5-5)"; "gemini" -> "Modèle (vide = gemini-2.5-flash)"; else -> "Modèle (vide = gpt-4o-mini)" }) },
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(8.dp))
@@ -804,6 +827,10 @@ class RemoteActivity : ComponentActivity() {
                     waiters["photo"]?.complete(JSONObject().put("erreur", detail).toString())
                 }
                 if (p[2] == "airplane") bot("S22 : $detail")
+                if (p[2] == "act") {
+                    waiters["evt:act"]?.complete(JSONObject().put("resultat", detail).toString())
+                    if (waiters["evt:act"] == null) bot("S22 : $detail")
+                }
             }
             "ack" -> if (p.size >= 6) {
                 p.getOrNull(6)?.let { lan?.hint(it) }

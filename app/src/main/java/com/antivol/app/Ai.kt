@@ -46,14 +46,30 @@ object Ai {
             "airplane", "Active ou coupe le mode avion du S22. Attention : l'activer coupe la connexion, plus aucun ordre ne passe ensuite.",
             schema(JSONObject().put("on", JSONObject().put("type", "boolean")), listOf("on"))
         ),
-        Tool("screen", "Démarre l'affichage en direct de l'écran du S22 dans la télécommande.", schema())
+        Tool("screen", "Démarre l'affichage en direct de l'écran du S22 dans la télécommande.", schema()),
+        Tool(
+            "open_app", "Ouvre une appli installée sur le S22 à partir de son nom (YouTube, WhatsApp, Appareil photo, Réglages...).",
+            schema(JSONObject().put("name", JSONObject().put("type", "string").put("description", "Nom de l'appli")), listOf("name"))
+        ),
+        Tool(
+            "open_url", "Ouvre un lien ou un site web dans le navigateur du S22.",
+            schema(JSONObject().put("url", JSONObject().put("type", "string")), listOf("url"))
+        ),
+        Tool(
+            "torch", "Allume ou éteint la lampe torche du S22.",
+            schema(JSONObject().put("on", JSONObject().put("type", "boolean")), listOf("on"))
+        ),
+        Tool(
+            "volume", "Règle le volume du S22 (0 à 100 pour cent).",
+            schema(JSONObject().put("percent", JSONObject().put("type", "integer")), listOf("percent"))
+        )
     )
 
     private const val SYSTEM =
         "Tu es l'assistant de l'application Antivol. Tu pilotes à distance le téléphone Samsung S22 de la personne, peut-être volé. " +
             "Réponds en français, en une ou deux phrases courtes. Exécute les ordres avec les outils. " +
             "Ne devine jamais un résultat : appuie-toi uniquement sur ce que les outils renvoient (une erreur veut dire que le S22 n'a pas répondu). " +
-            "N'active le mode volé que si la personne le demande clairement. Prévins avant le mode avion : il coupe la connexion."
+            "Tu peux aussi ouvrir une appli ou un lien, allumer la lampe, régler le volume, faire parler le téléphone. Enchaîne plusieurs outils si la demande en contient plusieurs. N'active le mode volé que si la personne le demande clairement. Prévins avant le mode avion : il coupe la connexion."
 
     fun configured(ctx: Context) = Prefs.str(ctx, "ai_key").isNotBlank()
 
@@ -62,9 +78,15 @@ object Ai {
         val key = Prefs.str(ctx, "ai_key").trim()
         if (key.isEmpty()) throw AiError("Aucune clé d'IA enregistrée")
         val provider = Prefs.str(ctx, "ai_provider", "openai")
-        val model = Prefs.str(ctx, "ai_model").trim().ifBlank { if (provider == "anthropic") "claude-haiku-5-5" else "gpt-4o-mini" }
+        val model = Prefs.str(ctx, "ai_model").trim().ifBlank {
+            when (provider) { "anthropic" -> "claude-haiku-5-5"; "gemini" -> "gemini-2.5-flash"; else -> "gpt-4o-mini" }
+        }
         val base = Prefs.str(ctx, "ai_base").trim().ifBlank {
-            if (provider == "anthropic") "https://api.anthropic.com" else "https://api.openai.com/v1"
+            when (provider) {
+                "anthropic" -> "https://api.anthropic.com"
+                "gemini" -> "https://generativelanguage.googleapis.com/v1beta/openai"
+                else -> "https://api.openai.com/v1"
+            }
         }.trimEnd('/')
         val h = history.dropWhile { it.first != "user" }
         return if (provider == "anthropic") askAnthropic(base, key, model, h, run) else askOpenAi(base, key, model, h, run)

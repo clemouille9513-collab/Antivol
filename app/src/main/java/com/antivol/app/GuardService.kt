@@ -403,6 +403,10 @@ class GuardService : Service() {
                     else release()
                 }
                 "avion" -> airplane(arg == "on")
+                "app" -> openApp(arg)
+                "url" -> openUrl(arg)
+                "torch" -> torch(arg == "on")
+                "volume" -> setVolume(arg.toIntOrNull() ?: 50)
                 "screen" -> screenCommand(arg == "on")
                 "shot" -> {
                     val shield = ShieldService.instance
@@ -429,6 +433,96 @@ class GuardService : Service() {
             reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}|${Lan.localIp()}")
         }
         return true
+    }
+
+    // ---------- Actions demandées par le chatbot ----------
+
+    private fun act(text: String) = event("act", text)
+
+    private fun frontDeniedWhenLocked(): Boolean {
+        if (Prefs.isLocked(this) || Prefs.isStolen(this)) {
+            act("Refusé : le S22 est verrouillé, rien ne peut s'ouvrir dessus.")
+            return true
+        }
+        return false
+    }
+
+    /** Ouvre une appli installée à partir de son nom (tolère les fautes). */
+    private fun openApp(name: String) {
+        if (frontDeniedWhenLocked()) return
+        val wanted = name.lowercase().trim()
+        if (wanted.isEmpty()) { act("Aucun nom d'appli donné."); return }
+        fun flat(s: String) = java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "").filter { it.isLetterOrDigit() }
+        val w = flat(wanted)
+        val pm = packageManager
+        val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(main, 0)
+        var best: android.content.pm.ResolveInfo? = null
+        var bestScore = Int.MAX_VALUE
+        for (r in apps) {
+            val label = flat(r.loadLabel(pm).toString())
+            val score = when {
+                label == w -> 0
+                label.startsWith(w) || w.startsWith(label) && label.length >= 3 -> 1
+                label.contains(w) && w.length >= 3 -> 2
+                flat(r.activityInfo.packageName).contains(w) && w.length >= 4 -> 3
+                else -> Int.MAX_VALUE
+            }
+            if (score < bestScore) { bestScore = score; best = r }
+        }
+        if (best == null) { act("Appli introuvable : « $name »."); return }
+        try {
+            val i = pm.getLaunchIntentForPackage(best.activityInfo.packageName)
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (i == null) { act("Impossible d'ouvrir « ${best.loadLabel(pm)} »."); return }
+            startActivity(i)
+            act("Appli ouverte : ${best.loadLabel(pm)}.")
+        } catch (e: Exception) {
+            act("Impossible d'ouvrir « ${best.loadLabel(pm)} » : ${e.message ?: "refusé par Android"}.")
+        }
+    }
+
+    private fun openUrl(url: String) {
+        if (frontDeniedWhenLocked()) return
+        var u = url.trim()
+        if (u.isEmpty()) { act("Aucun lien donné."); return }
+        if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://$u"
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            act("Lien ouvert : $u")
+        } catch (e: Exception) {
+            act("Impossible d'ouvrir le lien : ${e.message ?: "refusé par Android"}.")
+        }
+    }
+
+    private fun torch(on: Boolean) {
+        try {
+            val cm = getSystemService(android.hardware.camera2.CameraManager::class.java)
+            val id = cm.cameraIdList.firstOrNull {
+                cm.getCameraCharacteristics(it).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true &&
+                    cm.getCameraCharacteristics(it).get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) ==
+                    android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+            }
+            if (id == null) { act("Pas de lampe sur ce téléphone."); return }
+            cm.setTorchMode(id, on)
+            act(if (on) "Lampe allumée." else "Lampe éteinte.")
+        } catch (e: Exception) {
+            act("Lampe impossible : ${e.message ?: "refusé par Android"}.")
+        }
+    }
+
+    private fun setVolume(percent: Int) {
+        val p = percent.coerceIn(0, 100)
+        try {
+            val am = getSystemService(android.media.AudioManager::class.java)
+            for (s in intArrayOf(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.STREAM_RING, android.media.AudioManager.STREAM_ALARM)) {
+                am.setStreamVolume(s, am.getStreamMaxVolume(s) * p / 100, 0)
+            }
+            act("Volume réglé à $p %.")
+        } catch (e: Exception) {
+            act("Volume impossible : ${e.message ?: "refusé par Android"}.")
+        }
     }
 
     private fun screenCommand(on: Boolean) {

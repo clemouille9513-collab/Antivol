@@ -116,23 +116,27 @@ class ShieldService : AccessibilityService() {
         val protect = Prefs.isEnabled(this)
         if (!locked && !protect) return
         val type = e.eventType
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOWS_CHANGED && type != AccessibilityEvent.TYPE_VIEW_CLICKED) return
         val now = SystemClock.elapsedRealtime()
-        if (now < suspendUntil || now - lastAct < 600) return
+        // Quand le S22 est verrouillé on réagit presque sans délai ; sinon on garde une petite pause.
+        if (now < suspendUntil || now - lastAct < (if (locked) 60 else 600)) return
         // L'écran de verrouillage Samsung (code, empreinte) n'est pas touché.
         if (getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true) return
         val cls = e.className?.toString() ?: ""
 
         if (locked) {
             val bad = when {
+                // Un clic dans le panneau (roue des réglages, bouton d'extinction...) : on referme tout de suite.
                 pkg == "com.android.systemui" ->
-                    type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && looksLikePanel(cls)
+                    type == AccessibilityEvent.TYPE_VIEW_CLICKED || looksLikePanel(cls) ||
+                        (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED && shadeOpen())
                 pkg in allowedPackages() -> false
                 else -> true
             }
             if (bad) {
                 lastAct = now
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                kick(pkg == "com.android.systemui")
                 return
             }
         }
@@ -144,6 +148,28 @@ class ShieldService : AccessibilityService() {
                 Report.event(this, "admin", "Quelqu'un a ouvert les réglages de l'antivol")
                 askCodes()
             }
+        }
+    }
+
+    /** Vrai si le panneau de notifications ou de réglages rapides est ouvert. */
+    private fun shadeOpen(): Boolean = try {
+        windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM && it.root?.packageName == "com.android.systemui" && it.isActive }
+    } catch (_: Exception) { false }
+
+    /**
+     * Renvoie à l'accueil tout de suite, puis insiste : les Réglages peuvent masquer l'écran de blocage
+     * quelques instants, donc on ne laisse aucune pause entre les essais.
+     */
+    private fun kick(fromPanel: Boolean) {
+        if (fromPanel && Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+        performGlobalAction(GLOBAL_ACTION_HOME)
+        for (d in longArrayOf(40, 90, 160, 260, 400)) {
+            handler.postDelayed({
+                if (Prefs.isLocked(this) || Prefs.isStolen(this)) {
+                    val front = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
+                    if (front != null && front != packageName && front !in allowedPackages()) performGlobalAction(GLOBAL_ACTION_HOME)
+                }
+            }, d)
         }
     }
 
