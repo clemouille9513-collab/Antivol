@@ -168,7 +168,6 @@ class RemoteActivity : ComponentActivity() {
             return
         }
         if (!Ai.configured(this)) {
-            bot("L'IA n'est pas connectée (ajoute ta clé dans « Réglages IA »). Mode simple :")
             localChat(t)
             return
         }
@@ -178,7 +177,7 @@ class RemoteActivity : ComponentActivity() {
             val reply: String? = try {
                 Ai.ask(this, hist) { name, args -> runTool(name, args) }
             } catch (e: Exception) {
-                bot("IA indisponible : ${e.message ?: "erreur"}. Mode simple :")
+                bot("L'IA ne répond pas, je passe en mode gratuit.")
                 localChat(t)
                 null
             }
@@ -189,31 +188,79 @@ class RemoteActivity : ComponentActivity() {
         }.start()
     }
 
-    /** Mode simple, sans IA : comprend quelques phrases en français. */
-    private fun localChat(t: String) {
-        val n = norm(t)
-        val say = Regex("^(dis|dit|parle|repete)\\s*(que|:)?\\s+(.+)$").find(n)
-        if (say != null) {
-            val phrase = t.substring(say.groups[3]!!.range.first).take(200)
-            order("say", phrase, "Je fais dire « $phrase » au S22.")
-            return
+    /** Distance entre deux mots (pour comprendre les fautes de frappe). */
+    private fun lev(a: String, b: String): Int {
+        val d = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) d[i][0] = i
+        for (j in 0..b.length) d[0][j] = j
+        for (i in 1..a.length) for (j in 1..b.length) {
+            d[i][j] = minOf(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
         }
-        fun has(vararg w: String) = w.any { n.contains(it) }
+        return d[a.length][b.length]
+    }
 
-        when {
-            has("avion") -> order("avion", if (has("coupe", "desactive", "enleve", "off")) "off" else "on", "J'envoie l'ordre mode avion. Attention : en l'activant, le S22 n'est plus joignable.")
-            has("ecran en direct", "voir l'ecran", "voir ecran") -> bot(startScreen())
-            has("vole") -> order("stolen", "", "Mode volé envoyé : le S22 se verrouille, parle en boucle et passe en mode éco.")
-            has("libere", "arrete", "stop", "deverrouille", "debloque") -> order("free", Prefs.str(this, "remote_free_code"), "Je libère le S22 : alarme et blocage arrêtés.")
-            has("verrouill", "bloque") -> order("lock", "", "Je verrouille le S22.")
-            has("sonne", "alarme", "sirene", "bruit") -> order("alarm", "", "Je fais sonner le S22 au maximum.")
-            has("batterie", "charge", "niveau") -> order("status", "", "Je demande la batterie du S22.")
-            has("photo", "selfie") -> {
-                val back = has("arriere", "derriere", "dos")
-                order("photo", if (back) "back" else "front", "Je prends une photo ${if (back) "arrière" else "avant"}.")
+    /** Vrai si un mot de la phrase ressemble à l'un des mots-clés (avec une faute tolérée). */
+    private fun hasWord(words: List<String>, vararg roots: String): Boolean = words.any { w ->
+        roots.any { r ->
+            w.startsWith(r) || (r.length >= 5 && w.length >= r.length - 1 && lev(w.take(r.length), r) <= 1)
+        }
+    }
+
+    /**
+     * Chatbot gratuit, sans clé ni internet : comprend des phrases libres en français,
+     * plusieurs ordres d'un coup (« verrouille et fais sonner »), et les fautes de frappe.
+     */
+    private fun localChat(t: String) {
+        val clauses = t.split(Regex("(?i)\\s*(?:,|;|\\bet\\b|\\bpuis\\b|\\bensuite\\b|\\bapres\\b|\\baprès\\b)\\s*"))
+            .map { it.trim() }.filter { it.isNotEmpty() }
+        if (clauses.isEmpty()) return
+        var done = 0
+        for ((idx, c) in clauses.withIndex()) {
+            val n = norm(c)
+            val w = n.split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+            if (w.isEmpty()) continue
+
+            // « dis … » : le reste de la phrase est dit à voix haute (sauf « dis-moi … »).
+            if (w[0] in listOf("dis", "dit", "parle", "repete", "annonce") && w.getOrNull(1) !in listOf("moi", "ou", "est")) {
+                val rest = clauses.drop(idx).joinToString(" et ")
+                val phrase = rest.replace(Regex("(?i)^\\s*(dis|dit|parle|repete|répète|annonce)\\s*(que|:)?\\s*"), "").trim().take(200)
+                if (phrase.isNotEmpty()) {
+                    order("say", phrase, "Je fais dire « $phrase » au S22.")
+                    return
+                }
             }
-            has("ou ", "localis", "position", "trouve", "carte") -> order("locate", "", "Je cherche où est le S22.")
-            else -> bot("Je comprends : verrouille, sonne, batterie, où est mon téléphone, photo (avant ou arrière), dis … (phrase), volé, libère, mode avion.")
+
+            fun any(vararg r: String) = hasWord(w, *r)
+            val handled = when {
+                any("avion") -> {
+                    val off = any("coupe", "desactiv", "enlev", "retir", "eteins", "stoppe")
+                    order("avion", if (off) "off" else "on",
+                        if (off) "Je coupe le mode avion du S22." else "J'active le mode avion. Attention : le S22 ne sera plus joignable.")
+                    true
+                }
+                any("direct", "ecran", "regard", "montre") && any("direct", "voir", "vois", "regard", "affich", "montre", "ecran") && !any("verrouill") -> { bot(startScreen()); true }
+                any("vole", "volee", "vol") && !any("volume") -> { order("stolen", "", "Mode volé envoyé : le S22 se verrouille, parle en boucle et passe en mode éco."); true }
+                any("libere", "liberer", "deverrouill", "debloqu", "arrete", "stoppe", "stop", "tais", "silence", "coupe") -> {
+                    order("free", Prefs.str(this, "remote_free_code"), "Je libère le S22 : alarme et blocage arrêtés."); true
+                }
+                any("verrouill", "bloqu", "ferme", "protege", "securis") -> { order("lock", "", "Je verrouille le S22."); true }
+                any("sonne", "sonner", "alarme", "sirene", "bruit", "cri", "hurle", "fort") -> { order("alarm", "", "Je fais sonner le S22 au maximum."); true }
+                any("batterie", "charge", "niveau", "pourcent", "reste") -> { order("status", "", "Je demande la batterie du S22."); true }
+                any("photo", "selfie", "camera", "cheese", "prends") -> {
+                    val back = any("arriere", "derriere", "dos", "principale")
+                    order("photo", if (back) "back" else "front", "Je prends une photo ${if (back) "arrière" else "avant"}.")
+                    true
+                }
+                any("ou", "localis", "position", "trouv", "carte", "gps", "est") && (any("ou", "localis", "position", "trouv", "carte", "gps")) -> {
+                    order("locate", "", "Je cherche où est le S22."); true
+                }
+                any("salut", "bonjour", "coucou", "hello", "merci") -> { bot("Salut ! Dis-moi ce que je dois faire sur le S22."); true }
+                else -> false
+            }
+            if (handled) done++
+        }
+        if (done == 0) {
+            bot("Je n'ai pas compris. Je sais faire : verrouille, libère, fais sonner, batterie, où est mon téléphone, photo (avant ou arrière), dis … (phrase à voix haute), volé, mode avion, écran en direct. Tu peux en enchaîner plusieurs : « verrouille et fais sonner ».")
         }
     }
 
