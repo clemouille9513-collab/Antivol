@@ -36,8 +36,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,7 +69,7 @@ class RemoteActivity : ComponentActivity() {
     private var points by mutableStateOf<List<Pair<Double, Double>>>(emptyList())
     private var alarmOn by mutableStateOf(false)
     private var liveOn by mutableStateOf(false)
-    private var mapReady by mutableStateOf(false)
+    private var mapView: TileMapView? = null
     private var keyText by mutableStateOf("")
     private val fmt = SimpleDateFormat("HH:mm:ss", Locale.FRANCE)
     private val chat = mutableStateListOf<Pair<Boolean, String>>()
@@ -302,6 +300,7 @@ class RemoteActivity : ComponentActivity() {
         Ntfy.watchNetwork(this)
         val k = Prefs.remoteSecret(this)
         if (k.isNotEmpty()) keyText = Crypto.pretty(k)
+        liveOn = Prefs.bool(this, "live_on") && System.currentTimeMillis() - Prefs.long(this, "live_since") < 7_200_000L
         refreshPath()
         setContent { AntivolTheme { Screen() } }
     }
@@ -313,7 +312,6 @@ class RemoteActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        if (liveOn) { liveOn = false; send("live", "off") }
         sub?.stop()
         sub = null
         if (framesOn) send("screen", "off")
@@ -457,18 +455,11 @@ class RemoteActivity : ComponentActivity() {
                         shape = RoundedCornerShape(14.dp)
                     ) { Text(if (alarmOn) "Arrêter l'alarme" else "Alarme") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FilledTonalButton(
-                        onClick = { send("status", "") },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        shape = RoundedCornerShape(14.dp)
-                    ) { Text("Batterie") }
-                    FilledTonalButton(
-                        onClick = { send("locate", "") },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        shape = RoundedCornerShape(14.dp)
-                    ) { Text("Localiser") }
-                }
+                FilledTonalButton(
+                    onClick = { send("status", "") },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp)
+                ) { Text("Batterie") }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilledTonalButton(
                         onClick = { send("photo", "front") },
@@ -660,6 +651,19 @@ class RemoteActivity : ComponentActivity() {
                         if (provider == "gemini") Button(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Text("Gemini (gratuit)") }
                         else OutlinedButton(onClick = { provider = "gemini"; setPref("ai_provider", "gemini") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Text("Gemini (gratuit)") }
                         Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val url = when (provider) {
+                                    "gemini" -> "https://aistudio.google.com/apikey"
+                                    "anthropic" -> "https://console.anthropic.com/settings/keys"
+                                    else -> "https://platform.openai.com/api-keys"
+                                }
+                                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Créer ma clé (ouvre le site)") }
+                        Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = aiKey,
                             onValueChange = { aiKey = it.trim() },
@@ -734,23 +738,18 @@ class RemoteActivity : ComponentActivity() {
                     )
                     Spacer(Modifier.height(8.dp))
                     AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                webViewClient = object : WebViewClient() {
-                                    override fun onPageFinished(view: WebView, url: String?) { mapReady = true; pushMap(view) }
-                                }
-                                setBackgroundColor(0xFFE5E3DF.toInt())
-                                loadUrl("file:///android_asset/map.html")
-                            }
-                        },
-                        update = { v -> if (mapReady) { @Suppress("UNUSED_VARIABLE") val t = points; pushMap(v) } },
+                        factory = { ctx -> TileMapView(ctx).also { mapView = it } },
+                        update = { v -> @Suppress("UNUSED_VARIABLE") val t = points; v.setFixes(mapFixes(), liveOn) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(340.dp)
                             .clip(RoundedCornerShape(14.dp))
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                        OutlinedButton(onClick = { mapView?.zoomBy(1.0) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("+") }
+                        OutlinedButton(onClick = { mapView?.zoomBy(-1.0) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("−") }
+                        OutlinedButton(onClick = { mapView?.recenter() }, modifier = Modifier.weight(2f), shape = RoundedCornerShape(12.dp)) { Text("Centrer sur le S22") }
+                    }
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         FilledTonalButton(
@@ -759,7 +758,7 @@ class RemoteActivity : ComponentActivity() {
                             shape = RoundedCornerShape(14.dp)
                         ) { Text("Localiser") }
                         FilledTonalButton(
-                            onClick = { liveOn = !liveOn; send("live", if (liveOn) "on" else "off") },
+                            onClick = { setLive(!liveOn) },
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(14.dp)
                         ) { Text(if (liveOn) "Arrêter le suivi" else "Suivre en direct") }
@@ -915,6 +914,14 @@ class RemoteActivity : ComponentActivity() {
             }
         }
 
+    /** Suivi en direct : reste actif même quand on quitte l'écran ou qu'on ouvre Maps (le S22 l'arrête après 2 h). */
+    private fun setLive(on: Boolean) {
+        liveOn = on
+        Prefs.setBool(this, "live_on", on)
+        Prefs.setLong(this, "live_since", System.currentTimeMillis())
+        send("live", if (on) "on" else "off")
+    }
+
     private fun formatAge(sec: Long): String = when {
         sec < 5 -> "quelques secondes"
         sec < 90 -> "$sec s"
@@ -922,17 +929,12 @@ class RemoteActivity : ComponentActivity() {
         else -> "${sec / 3600} h"
     }
 
-    /** Envoie les positions à la carte (point rouge, cercle de précision, trajet). */
-    private fun pushMap(v: WebView) {
-        val fixes = Prefs.history(this).mapNotNull {
-            val f = it.split(",")
-            val la = f.getOrNull(1)?.toDoubleOrNull()
-            val lo = f.getOrNull(2)?.toDoubleOrNull()
-            if (la == null || lo == null) null else "[$la,$lo,${f.getOrNull(3)?.toDoubleOrNull() ?: 0.0}]"
-        }.takeLast(150)
-        if (fixes.isEmpty()) return
-        v.evaluateJavascript("setTrack([${fixes.joinToString(",")}], $liveOn)", null)
-    }
+    private fun mapFixes(): List<TileMapView.Fix> = Prefs.history(this).mapNotNull {
+        val f = it.split(",")
+        val la = f.getOrNull(1)?.toDoubleOrNull()
+        val lo = f.getOrNull(2)?.toDoubleOrNull()
+        if (la == null || lo == null) null else TileMapView.Fix(la, lo, f.getOrNull(3)?.toDoubleOrNull() ?: 20.0)
+    }.takeLast(150)
 
     private fun refreshPath() {
         val pts = history().map { Pair(it.second, it.third) }
@@ -942,6 +944,7 @@ class RemoteActivity : ComponentActivity() {
     private fun openMaps() {
         val last = history().lastOrNull()
         if (last == null) { toast("Aucune position reçue. Appuie sur « Localiser »."); return }
+        if (!liveOn) { setLive(true); toast("Suivi en direct activé : il continue pendant que Maps est ouvert") }
         try {
             startActivity(
                 Intent(

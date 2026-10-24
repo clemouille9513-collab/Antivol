@@ -47,7 +47,7 @@ object Locator {
             if (best == null || l.accuracy < best!!.accuracy) best = l
             val b = best!!
             val s = sent
-            if (s == null && b.accuracy <= 60f) { sent = b; onFix(b) }
+            if (s == null && b.accuracy <= 30f) { sent = b; onFix(b) }
             else if (s != null && b.accuracy < s.accuracy * 0.6f) { sent = b; onFix(b) }
             if (b.accuracy <= 12f && !finished) { finished = true; stop() }
         }
@@ -64,6 +64,11 @@ object Locator {
                 override fun onLocationResult(r: LocationResult) { for (l in r.locations) consider(l, stop) }
             }
             client.requestLocationUpdates(req, cb, Looper.getMainLooper())
+            // Si le GPS tarde (intérieur), on envoie quand même la meilleure mesure correcte après 6 s.
+            h.postDelayed({
+                val b = best
+                if (sent == null && b != null && b.accuracy <= 150f) { sent = b; onFix(b) }
+            }, 6_000L)
             h.postDelayed({
                 stop()
                 val b = best; val s = sent

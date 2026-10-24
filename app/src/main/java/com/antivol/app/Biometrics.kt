@@ -32,8 +32,8 @@ object Biometrics {
     enum class Kind { OWNER, OTHER, NONE }
     class Result(val kind: Kind, val score: Float)
 
-    const val FACE_THRESHOLD = 0.55f
-    const val VOICE_THRESHOLD = 0.50f
+    const val FACE_THRESHOLD = 0.42f
+    const val VOICE_THRESHOLD = 0.32f
 
     // ---------- Stockage ----------
 
@@ -97,6 +97,17 @@ object Biometrics {
 
     /** Les visages d'une image, recadrés, du plus grand au plus petit. */
     fun faces(bmp: Bitmap): List<Bitmap> {
+        // Téléphone tenu de travers : on essaie aussi l'image tournée.
+        for (rot in intArrayOf(0, 90, 270)) {
+            val b = if (rot == 0) bmp else Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height,
+                android.graphics.Matrix().apply { postRotate(rot.toFloat()) }, true)
+            val r = facesUpright(b)
+            if (r.isNotEmpty()) return r
+        }
+        return emptyList()
+    }
+
+    private fun facesUpright(bmp: Bitmap): List<Bitmap> {
         val faces = Tasks.await(detector().process(InputImage.fromBitmap(bmp, 0)), 10, TimeUnit.SECONDS)
         return faces.sortedByDescending { it.boundingBox.width() * it.boundingBox.height() }.mapNotNull { f ->
             val r = f.boundingBox

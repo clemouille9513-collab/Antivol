@@ -169,6 +169,7 @@ class GuardService : Service() {
     private var peekPausedUntil = 0L
 
     private var peekStrikes = 0
+    @Volatile private var bioPausedUntil = 0L
 
     /** Délai entre deux regards de la caméra (5, 10, 15 ou 30 secondes, au choix). */
     private fun peekEvery(): Long = (Prefs.str(this, "peek_interval", "15").toLongOrNull() ?: 15L).coerceIn(3L, 300L) * 1000L
@@ -619,6 +620,8 @@ class GuardService : Service() {
     /** Arrête tout : alarme, voix, écran de blocage. */
     private fun release() {
         if (Prefs.isLocked(this) || Prefs.isStolen(this)) event("unlocked", "Téléphone libéré")
+        // Tu viens de prouver que c'est toi (codes) : pas de blocage par visage ou voix pendant 10 minutes.
+        bioPausedUntil = System.currentTimeMillis() + 600_000L
         Prefs.setStolen(this, false)
         Prefs.setLocked(this, false)
         handler.removeCallbacks(lockRunnable)
@@ -646,10 +649,10 @@ class GuardService : Service() {
     private var liveUntil = 0L
     private var lastLive = 0L
 
-    /** Suivi en direct : une position toutes les ~3 s (12 s s'il n'y a pas de Wi-Fi direct), pendant 10 minutes. */
+    /** Suivi en direct : une position toutes les ~3 s (12 s s'il n'y a pas de Wi-Fi direct), pendant 2 heures. */
     private fun liveLocation(on: Boolean) {
         if (!on) { liveUntil = 0L; Locator.stopLive(this); return }
-        liveUntil = System.currentTimeMillis() + 600_000L
+        liveUntil = System.currentTimeMillis() + 7_200_000L
         Locator.live(this) { l ->
             val now = System.currentTimeMillis()
             if (now > liveUntil) { liveLocation(false); return@live }
@@ -751,9 +754,11 @@ class GuardService : Service() {
                         // Moi + quelqu'un qui regarde par-dessus l'épaule : l'écran se cache.
                         sc.owner -> { peekStrikes = 0; showPeekOverlay(sc.total) }
                         // Quelqu'un d'autre, sans moi : on revérifie vite, puis on verrouille.
+                        // Visage mal reconnu (angle, lumière) mais pas clairement étranger : on ne bloque pas.
+                        sc.best >= 0.30f || System.currentTimeMillis() < bioPausedUntil -> peekStrikes = 0
                         else -> {
                             peekStrikes++
-                            if (peekStrikes >= 2) {
+                            if (peekStrikes >= 3) {
                                 peekStrikes = 0
                                 event("face", "Visage inconnu devant le téléphone (similarité ${"%.2f".format(sc.best)})")
                                 if (bytes != null) sendImage(bytes, "front", "visage inconnu devant l'écran")
@@ -928,40 +933,53 @@ class GuardService : Service() {
         }.start()
     }
 
+    /**
+     * Vérifie que c'est bien toi. Prudent pour ne pas t'enfermer :
+     * jusqu'à 3 photos (on s'arrête dès que ton visage est reconnu), la voix seule ne verrouille jamais,
+     * et on ne verrouille que si le visage est clairement celui de quelqu'un d'autre.
+     */
     private fun verifyOwner() {
+        var faceKind = Biometrics.Kind.NONE
+        var faceScore = 1f
+        var shot: ByteArray? = null
         if (Biometrics.faceEnrolled(this) && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            camBusy = true
-            val latch = CountDownLatch(1)
-            var jpeg: ByteArray? = null
-            PhotoCapture(this).capture(true, 640) { b -> jpeg = b; latch.countDown() }
-            latch.await(12, TimeUnit.SECONDS)
-            camBusy = false
-            val b = jpeg
-            if (b != null) {
+            for (attempt in 0 until 3) {
+                camBusy = true
+                val latch = CountDownLatch(1)
+                var jpeg: ByteArray? = null
+                PhotoCapture(this).capture(true, 640) { b -> jpeg = b; latch.countDown() }
+                latch.await(12, TimeUnit.SECONDS)
+                camBusy = false
+                val b = jpeg ?: continue
                 val r = Biometrics.checkFace(this, b)
-                val score = "%.2f".format(r.score)
-                when (r.kind) {
-                    Biometrics.Kind.OWNER -> { event("motion", "Visage reconnu (similarité $score) : tout va bien"); return }
-                    Biometrics.Kind.OTHER -> {
-                        event("face", "Visage inconnu (similarité $score, seuil ${Biometrics.FACE_THRESHOLD})")
-                        sendImage(b, "front", "visage inconnu pendant une course")
-                        handler.post { triggerLock("Visage inconnu pendant une course") }
-                        return
-                    }
-                    Biometrics.Kind.NONE -> event("motion", "Aucun visage devant la caméra avant")
+                if (r.kind == Biometrics.Kind.OWNER) {
+                    event("motion", "Visage reconnu (similarité ${"%.2f".format(r.score)}) : tout va bien")
+                    return
                 }
+                if (r.kind == Biometrics.Kind.OTHER) {
+                    faceKind = Biometrics.Kind.OTHER
+                    if (r.score < faceScore) faceScore = r.score
+                    shot = b
+                }
+                try { Thread.sleep(1200) } catch (_: InterruptedException) {}
             }
         }
+        var voiceKind = Biometrics.Kind.NONE
         if (Biometrics.voiceEnrolled(this) && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             val r = Biometrics.checkVoice(this, 4)
-            val score = "%.2f".format(r.score)
+            voiceKind = r.kind
             when (r.kind) {
-                Biometrics.Kind.OWNER -> event("motion", "Voix reconnue (similarité $score)")
-                Biometrics.Kind.OTHER -> {
-                    event("voice", "Voix inconnue (similarité $score, seuil ${Biometrics.VOICE_THRESHOLD})")
-                    handler.post { triggerLock("Voix inconnue pendant une course") }
-                }
-                Biometrics.Kind.NONE -> event("motion", "Personne ne parle : impossible de vérifier la voix")
+                Biometrics.Kind.OWNER -> { event("motion", "Voix reconnue (similarité ${"%.2f".format(r.score)})"); return }
+                Biometrics.Kind.OTHER -> event("voice", "Voix pas reconnue (similarité ${"%.2f".format(r.score)}) : pas de blocage à cause de la voix seule")
+                Biometrics.Kind.NONE -> event("motion", "Personne ne parle : voix non vérifiée")
+            }
+        }
+        if (faceKind == Biometrics.Kind.OTHER) {
+            event("face", "Visage pas reconnu sur 3 photos (meilleure similarité ${"%.2f".format(faceScore)}, seuil ${Biometrics.FACE_THRESHOLD})")
+            shot?.let { sendImage(it, "front", "visage inconnu pendant une course") }
+            val clear = faceScore < 0.30f || voiceKind == Biometrics.Kind.OTHER
+            if (clear && System.currentTimeMillis() >= bioPausedUntil) {
+                handler.post { triggerLock("Visage inconnu pendant une course") }
             }
         }
     }
