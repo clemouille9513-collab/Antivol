@@ -200,6 +200,79 @@ class ShieldService : AccessibilityService() {
         try { o.show() } catch (_: Exception) { authOverlay = null }
     }
 
+    // ---------- Pilotage libre de l'écran (utilisé par le chatbot) ----------
+
+    /** Texte visible à l'écran, avec les boutons marqués [bouton]. */
+    fun readScreen(): String {
+        val root = try { rootInActiveWindow } catch (_: Exception) { null } ?: return "Écran illisible (fenêtre protégée ou vide)."
+        val out = StringBuilder("Appli au premier plan : ${root.packageName}\n")
+        var n = 0
+        fun walk(node: AccessibilityNodeInfo?) {
+            if (node == null || n >= 60 || out.length > 1500) return
+            val t = (node.text ?: node.contentDescription)?.toString()?.trim()
+            if (!t.isNullOrEmpty() && node.isVisibleToUser) {
+                out.append(if (node.isClickable || node.isCheckable) "[bouton] " else "").append(t.take(60)).append('\n')
+                n++
+            }
+            for (i in 0 until node.childCount) walk(node.getChild(i))
+        }
+        walk(root)
+        return out.toString()
+    }
+
+    /** Touche l'élément dont le texte correspond. */
+    fun tapText(text: String): Boolean {
+        val root = try { rootInActiveWindow } catch (_: Exception) { null } ?: return false
+        val list = try { root.findAccessibilityNodeInfosByText(text) } catch (_: Exception) { null } ?: return false
+        for (n in list) {
+            if (!n.isVisibleToUser) continue
+            var cur: AccessibilityNodeInfo? = n
+            while (cur != null && !cur.isClickable) cur = cur.parent
+            if (cur != null && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        return false
+    }
+
+    /** Écrit dans le champ de texte sélectionné. */
+    fun typeText(text: String): Boolean {
+        val root = try { rootInActiveWindow } catch (_: Exception) { null } ?: return false
+        val target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val args = android.os.Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    fun press(key: String): Boolean = when (key) {
+        "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+        "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
+        "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+        "notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+        "quick_settings" -> performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+        else -> false
+    }
+
+    /** Fait glisser le doigt au milieu de l'écran (up, down, left, right). */
+    fun swipe(dir: String, done: (Boolean) -> Unit) {
+        val m = resources.displayMetrics
+        val w = m.widthPixels.toFloat(); val h = m.heightPixels.toFloat()
+        val p = android.graphics.Path()
+        when (dir) {
+            "up" -> { p.moveTo(w / 2, h * 0.7f); p.lineTo(w / 2, h * 0.3f) }
+            "down" -> { p.moveTo(w / 2, h * 0.3f); p.lineTo(w / 2, h * 0.7f) }
+            "left" -> { p.moveTo(w * 0.8f, h / 2); p.lineTo(w * 0.2f, h / 2) }
+            "right" -> { p.moveTo(w * 0.2f, h / 2); p.lineTo(w * 0.8f, h / 2) }
+            else -> { done(false); return }
+        }
+        val g = android.accessibilityservice.GestureDescription.Builder()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 300)).build()
+        val ok = dispatchGesture(g, object : GestureResultCallback() {
+            override fun onCompleted(d: android.accessibilityservice.GestureDescription?) = done(true)
+            override fun onCancelled(d: android.accessibilityservice.GestureDescription?) = done(false)
+        }, null)
+        if (!ok) done(false)
+    }
+
     // ---------- Capture de l'écran (écran en direct) ----------
 
     private val shotExec = Executors.newSingleThreadExecutor()

@@ -135,6 +135,11 @@ class RemoteActivity : ComponentActivity() {
         "open_url" -> waitFor("evt:act", 30000) { send("url", a.optString("url").take(200)) }
         "torch" -> waitFor("evt:act", 30000) { send("torch", if (a.optBoolean("on")) "on" else "off") }
         "volume" -> waitFor("evt:act", 30000) { send("volume", a.optInt("percent", 50).toString()) }
+        "read_screen" -> waitFor("evt:act", 30000) { send("ui", "read") }
+        "tap" -> waitFor("evt:act", 30000) { send("ui", "tap:" + a.optString("text").take(120)) }
+        "type_text" -> waitFor("evt:act", 30000) { send("ui", "type:" + a.optString("text").take(150)) }
+        "press" -> waitFor("evt:act", 30000) { send("ui", "press:" + a.optString("key")) }
+        "swipe" -> waitFor("evt:act", 30000) { send("ui", "swipe:" + a.optString("direction")) }
         else -> JSONObject().put("erreur", "outil inconnu").toString()
     }
 

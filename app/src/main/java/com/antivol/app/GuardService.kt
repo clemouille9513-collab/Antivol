@@ -97,6 +97,7 @@ class GuardService : Service() {
     private var winStart = 0L
     private var runWindows = 0
     private var lastMotionCheck = 0L
+    private var lastSpike = 0L
 
     /** Surveille l'écran : si le verrouillage est censé être là mais que sa fenêtre a disparu, on la remet. */
     private val watchdog = object : Runnable {
@@ -118,14 +119,16 @@ class GuardService : Service() {
             val x = e.values[0].toDouble(); val y = e.values[1].toDouble(); val z = e.values[2].toDouble()
             val mag = sqrt(x * x + y * y + z * z)
             val now = e.timestamp / 1_000_000L
+            // Arrachement ou secousse brutale : on vérifie tout de suite qui tient le téléphone.
+            if (mag > 30.0 && now - lastSpike > 4000) { lastSpike = now; onRunning("Secousse brutale détectée") }
             if (winStart == 0L) winStart = now
             winN++; winSum += mag; winSq += mag * mag
             if (now - winStart >= 1000) {
                 val mean = winSum / winN
                 val sd = sqrt(max(winSq / winN - mean * mean, 0.0))
-                runWindows = if (sd > 3.5) runWindows + 1 else 0
+                runWindows = if (sd > 3.2) runWindows + 1 else 0
                 winN = 0; winSum = 0.0; winSq = 0.0; winStart = now
-                if (runWindows >= 6) { runWindows = 0; onRunning() }
+                if (runWindows >= 5) { runWindows = 0; onRunning("Agitation ou course détectée") }
             }
         }
         override fun onAccuracyChanged(s: Sensor?, a: Int) {}
@@ -137,7 +140,15 @@ class GuardService : Service() {
             val now = System.currentTimeMillis()
             if (now > screenUntil || (!Lan.watching() && now - screenStarted > 25_000)) {
                 screenOn = false
+                ProjectionService.instance?.setStreaming(false)
                 event("screen", "Écran en direct arrêté")
+                return
+            }
+            // Flux fluide (10 images par seconde) si l'autorisation d'enregistrement d'écran a été donnée.
+            val proj = ProjectionService.instance
+            if (proj != null && proj.ready()) {
+                proj.setStreaming(true)
+                handler.postDelayed(this, 1000)
                 return
             }
             val shield = ShieldService.instance
@@ -157,10 +168,15 @@ class GuardService : Service() {
     private var peekBusy = false
     private var peekPausedUntil = 0L
 
+    private var peekStrikes = 0
+
+    /** Délai entre deux regards de la caméra (5, 10, 15 ou 30 secondes, au choix). */
+    private fun peekEvery(): Long = (Prefs.str(this, "peek_interval", "15").toLongOrNull() ?: 15L).coerceIn(3L, 300L) * 1000L
+
     private val peekRunnable = object : Runnable {
         override fun run() {
             try { scanForPeekers() } catch (_: Exception) { peekBusy = false }
-            handler.postDelayed(this, 30_000)
+            handler.postDelayed(this, peekEvery())
         }
     }
 
@@ -289,9 +305,9 @@ class GuardService : Service() {
         handler.removeCallbacks(trackRunnable)
         handler.postDelayed(trackRunnable, 60_000)
 
-        // Détection des regards : une photo avant toutes les 30 secondes quand l'écran est allumé.
+        // Détection des regards : une photo avant à intervalle réglable quand l'écran est allumé.
         handler.removeCallbacks(peekRunnable)
-        handler.postDelayed(peekRunnable, 30_000)
+        handler.postDelayed(peekRunnable, peekEvery())
 
         if (!registered) {
             val filter = IntentFilter().apply {
@@ -404,6 +420,7 @@ class GuardService : Service() {
                 }
                 "avion" -> airplane(arg == "on")
                 "app" -> openApp(arg)
+                "ui" -> uiCommand(arg)
                 "url" -> openUrl(arg)
                 "torch" -> torch(arg == "on")
                 "volume" -> setVolume(arg.toIntOrNull() ?: 50)
@@ -418,7 +435,12 @@ class GuardService : Service() {
                 }
                 "cfg" -> {
                     val kv = arg.split("=", limit = 2)
-                    if (kv.size == 2) {
+                    if (kv.size == 2 && kv[0] == "peek_interval") {
+                        Prefs.setStr(this, "peek_interval", kv[1].filter { it.isDigit() }.ifEmpty { "15" })
+                        event("cfg", "Le S22 regarde maintenant toutes les ${Prefs.str(this, "peek_interval", "15")} secondes")
+                        handler.removeCallbacks(peekRunnable)
+                        handler.postDelayed(peekRunnable, peekEvery())
+                    } else if (kv.size == 2) {
                         val on = kv[1] == "1"
                         when (kv[0]) {
                             "lock_airplane" -> Prefs.setBool(this, "lock_airplane", on)
@@ -483,6 +505,26 @@ class GuardService : Service() {
         }
     }
 
+    /** Pilotage libre de l'écran (pour que l'IA improvise) : lire, toucher, écrire, appuyer, glisser. */
+    private fun uiCommand(arg: String) {
+        if (frontDeniedWhenLocked()) return
+        val shield = ShieldService.instance
+        if (shield == null) {
+            act("Impossible : la protection renforcée (accessibilité) n'est pas active sur le S22.")
+            return
+        }
+        val k = arg.substringBefore(":")
+        val v = arg.substringAfter(":", "")
+        when (k) {
+            "read" -> act(shield.readScreen())
+            "tap" -> act(if (shield.tapText(v)) "Touché : « $v »." else "Rien trouvé à l'écran qui s'appelle « $v ».")
+            "type" -> act(if (shield.typeText(v)) "Texte écrit." else "Aucun champ de texte sélectionné à l'écran.")
+            "press" -> act(if (shield.press(v)) "Touche « $v » faite." else "Touche inconnue : $v.")
+            "swipe" -> shield.swipe(v) { ok -> act(if (ok) "Glissé vers $v." else "Glissement impossible.") }
+            else -> act("Action inconnue : $k.")
+        }
+    }
+
     private fun openUrl(url: String) {
         if (frontDeniedWhenLocked()) return
         var u = url.trim()
@@ -526,7 +568,7 @@ class GuardService : Service() {
     }
 
     private fun screenCommand(on: Boolean) {
-        if (!on) { screenOn = false; return }
+        if (!on) { screenOn = false; ProjectionService.instance?.setStreaming(false); return }
         val now = System.currentTimeMillis()
         screenUntil = now + 600_000
         if (!screenOn) {
@@ -685,9 +727,7 @@ class GuardService : Service() {
 
     private fun scanForPeekers() {
         if (!Prefs.isPeekEnabled(this) || peekBusy || camBusy) return
-        if (System.currentTimeMillis() < peekPausedUntil) return
         if (Prefs.isLocked(this) || Prefs.isStolen(this)) return
-        if (peekOverlay?.isShown == true) return
         if (!Settings.canDrawOverlays(this)) return
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return
         // Seulement quand quelqu'un utilise vraiment le téléphone : écran allumé et déverrouillé.
@@ -696,12 +736,41 @@ class GuardService : Service() {
 
         peekBusy = true
         PhotoCapture(this).capture(true, 640) { bytes ->
-            val faces = if (bytes == null) 0 else countFaces(bytes)
-            handler.post {
-                peekBusy = false
-                if (faces >= 2) showPeekOverlay(faces)
-            }
+            Thread {
+                val sc = try { if (bytes == null) null else Biometrics.analyze(this, bytes) } catch (_: Exception) { null }
+                // Sans visage enregistré, on garde l'ancienne règle : deux visages ou plus cachent l'écran.
+                val enrolled = Biometrics.faceEnrolled(this)
+                handler.post {
+                    peekBusy = false
+                    if (sc == null || sc.total == 0) { peekStrikes = 0; return@post }
+                    when {
+                        !enrolled -> if (sc.total >= 2) showPeekOverlay(sc.total) else dismissPeek()
+                        // Moi seul devant le téléphone : tout va bien.
+                        sc.owner && sc.others == 0 -> { peekStrikes = 0; dismissPeek() }
+                        // Moi + quelqu'un qui regarde par-dessus l'épaule : l'écran se cache.
+                        sc.owner -> { peekStrikes = 0; showPeekOverlay(sc.total) }
+                        // Quelqu'un d'autre, sans moi : on revérifie vite, puis on verrouille.
+                        else -> {
+                            peekStrikes++
+                            if (peekStrikes >= 2) {
+                                peekStrikes = 0
+                                event("face", "Visage inconnu devant le téléphone (similarité ${"%.2f".format(sc.best)})")
+                                if (bytes != null) sendImage(bytes, "front", "visage inconnu devant l'écran")
+                                triggerLock("Visage inconnu devant le téléphone")
+                            } else {
+                                handler.removeCallbacks(peekRunnable)
+                                handler.postDelayed(peekRunnable, 2_000)
+                            }
+                        }
+                    }
+                }
+            }.start()
         }
+    }
+
+    private fun dismissPeek() {
+        peekOverlay?.hide()
+        peekOverlay = null
     }
 
     /** Compte les visages d'une photo JPEG (détecteur intégré à Android, jusqu'à 5). */
@@ -720,6 +789,7 @@ class GuardService : Service() {
 
     private fun showPeekOverlay(faces: Int) {
         if (peekOverlay?.isShown == true || Prefs.isLocked(this)) return
+        if (System.currentTimeMillis() < peekPausedUntil) return
         event("peek", "$faces visages devant l'écran")
         val o = PeekOverlay(this) {
             peekOverlay = null
@@ -841,14 +911,14 @@ class GuardService : Service() {
         } catch (_: Exception) {}
     }
 
-    private fun onRunning() {
+    private fun onRunning(why: String = "Course détectée") {
         val now = System.currentTimeMillis()
-        if (now - lastMotionCheck < 120_000) return
+        if (now - lastMotionCheck < 45_000) return
         if (!Prefs.bool(this, "motion_guard", true) || !Prefs.isEnabled(this)) return
         if (!Biometrics.faceEnrolled(this) && !Biometrics.voiceEnrolled(this)) return
         if (Prefs.isLocked(this) || Prefs.isStolen(this) || camBusy || peekBusy) return
         lastMotionCheck = now
-        event("motion", "Course détectée : vérification du visage et de la voix")
+        event("motion", "$why : vérification du visage et de la voix")
         Thread {
             try { verifyOwner() } catch (e: Exception) {
                 camBusy = false

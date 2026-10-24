@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.media.projection.MediaProjectionManager
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import android.provider.Settings
@@ -198,6 +199,24 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
+    fun askScreenShare() {
+        val mpm = getSystemService(MediaProjectionManager::class.java)
+        @Suppress("DEPRECATION")
+        startActivityForResult(mpm.createScreenCaptureIntent(), 77)
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 77) {
+            if (resultCode == RESULT_OK && data != null) {
+                ProjectionService.start(this, resultCode, data)
+                toast("Écran en direct fluide autorisé")
+            } else toast("Autorisation refusée")
+            tick++
+        }
+    }
+
     fun openRemote() = startActivity(Intent(this, RemoteActivity::class.java))
 
     fun testLock() {
@@ -375,6 +394,25 @@ private fun Home(act: MainActivity, tick: Int) {
                         Prefs.setPeekEnabled(act, it)
                     })
                 }
+                var every by remember { mutableStateOf(Prefs.str(act, "peek_interval", "15")) }
+                Spacer(Modifier.height(8.dp))
+                Text("La caméra regarde toutes les… (secondes)", color = cDim, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("5", "10", "15", "30").forEach { v ->
+                        if (every == v) Button(onClick = {}, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text(v) }
+                        else OutlinedButton(
+                            onClick = { every = v; Prefs.setStr(act, "peek_interval", v) },
+                            modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)
+                        ) { Text(v) }
+                    }
+                }
+                Text(
+                    "Avec ton visage enregistré : toi seul = rien ; toi + un curieux = l'écran se cache ; un inconnu sans toi = le téléphone se verrouille. Prends « 5 » ou « 10 » pour être le plus réactif (plus de batterie).",
+                    color = cDim, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                StepRow(ProjectionService.instance?.ready() == true, "Écran en direct fluide (10 images/s)",
+                    "À autoriser une fois (et après chaque redémarrage)", "Autoriser") { act.askScreenShare() }
             }
 
             Section("RECONNAISSANCE DU PROPRIÉTAIRE")

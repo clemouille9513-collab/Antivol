@@ -152,6 +152,27 @@ object Biometrics {
         return "Visage enregistré (${embs.size} photos)." + if (multiple) " Attention : plusieurs visages étaient visibles, le plus grand a été gardé." else ""
     }
 
+    /** Résultat d'un coup d'œil : combien de visages, le propriétaire en fait-il partie, combien d'autres. */
+    class Scan(val total: Int, val owner: Boolean, val others: Int, val best: Float)
+
+    fun analyze(ctx: Context, jpeg: ByteArray): Scan {
+        val own = load(ctx, "face_emb")
+        val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return Scan(0, false, 0, 0f)
+        // Les visages minuscules (passants au loin) sont ignorés ; celui d'un curieux derrière l'épaule reste assez grand.
+        val f = faces(bmp).filter { it.width >= 70 }.take(5)
+        if (f.isEmpty()) return Scan(0, false, 0, 0f)
+        if (own == null) return Scan(f.size, false, f.size, 0f)
+        var owner = false
+        var others = 0
+        var best = -1f
+        for (face in f) {
+            val c = cos(own, embedFace(ctx, face))
+            best = max(best, c)
+            if (c >= FACE_THRESHOLD) owner = true else others++
+        }
+        return Scan(f.size, owner, others, best)
+    }
+
     fun checkFace(ctx: Context, jpeg: ByteArray): Result {
         val own = load(ctx, "face_emb") ?: return Result(Kind.NONE, 0f)
         val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return Result(Kind.NONE, 0f)

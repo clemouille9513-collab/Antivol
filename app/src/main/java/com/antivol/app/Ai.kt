@@ -62,6 +62,23 @@ object Ai {
         Tool(
             "volume", "Règle le volume du S22 (0 à 100 pour cent).",
             schema(JSONObject().put("percent", JSONObject().put("type", "integer")), listOf("percent"))
+        ),
+        Tool("read_screen", "Lit le texte visible à l'écran du S22 et liste ses boutons. À utiliser avant de toucher quelque chose.", schema()),
+        Tool(
+            "tap", "Touche à l'écran du S22 le bouton ou l'élément dont le texte correspond.",
+            schema(JSONObject().put("text", JSONObject().put("type", "string")), listOf("text"))
+        ),
+        Tool(
+            "type_text", "Écrit du texte dans le champ sélectionné à l'écran du S22 (touche d'abord le champ avec tap).",
+            schema(JSONObject().put("text", JSONObject().put("type", "string")), listOf("text"))
+        ),
+        Tool(
+            "press", "Appuie sur une touche du S22 : back, home, recents, notifications, quick_settings.",
+            schema(JSONObject().put("key", JSONObject().put("type", "string").put("enum", JSONArray(listOf("back", "home", "recents", "notifications", "quick_settings")))), listOf("key"))
+        ),
+        Tool(
+            "swipe", "Fait glisser le doigt sur l'écran du S22 pour défiler.",
+            schema(JSONObject().put("direction", JSONObject().put("type", "string").put("enum", JSONArray(listOf("up", "down", "left", "right")))), listOf("direction"))
         )
     )
 
@@ -69,7 +86,7 @@ object Ai {
         "Tu es l'assistant de l'application Antivol. Tu pilotes à distance le téléphone Samsung S22 de la personne, peut-être volé. " +
             "Réponds en français, en une ou deux phrases courtes. Exécute les ordres avec les outils. " +
             "Ne devine jamais un résultat : appuie-toi uniquement sur ce que les outils renvoient (une erreur veut dire que le S22 n'a pas répondu). " +
-            "Tu peux aussi ouvrir une appli ou un lien, allumer la lampe, régler le volume, faire parler le téléphone. Enchaîne plusieurs outils si la demande en contient plusieurs. N'active le mode volé que si la personne le demande clairement. Prévins avant le mode avion : il coupe la connexion."
+            "Tu peux aussi ouvrir une appli ou un lien, allumer la lampe, régler le volume, faire parler le téléphone. Pour tout ordre improvisé, pilote l'écran comme une personne : ouvre l'appli, lis l'écran avec read_screen, touche avec tap, écris avec type_text, fais défiler avec swipe, relis, et continue jusqu'à avoir fini. Enchaîne autant d'outils que nécessaire. Pour une action irréversible (payer, supprimer, envoyer un message, acheter), demande d'abord confirmation à la personne. N'active le mode volé que si la personne le demande clairement. Prévins avant le mode avion : il coupe la connexion."
 
     fun configured(ctx: Context) = Prefs.str(ctx, "ai_key").isNotBlank()
 
@@ -132,7 +149,7 @@ object Ai {
                 )
             )
         }
-        repeat(5) {
+        repeat(14) {
             val body = JSONObject().put("model", model).put("messages", msgs).put("tools", defs).toString()
             val resp = post("$base/chat/completions", body, mapOf("Authorization" to "Bearer $key"))
             val msg = JSONObject(resp).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
@@ -157,7 +174,7 @@ object Ai {
         history.forEach { (r, c) -> msgs.put(JSONObject().put("role", r).put("content", c)) }
         val defs = JSONArray()
         tools.forEach { defs.put(JSONObject().put("name", it.name).put("description", it.desc).put("input_schema", it.schema)) }
-        repeat(5) {
+        repeat(14) {
             val body = JSONObject().put("model", model).put("max_tokens", 1024).put("system", SYSTEM)
                 .put("messages", msgs).put("tools", defs).toString()
             val resp = post(
