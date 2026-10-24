@@ -26,7 +26,10 @@ object Ai {
     private val tools: List<Tool> = listOf(
         Tool("lock", "Verrouille le S22 : l'écran de codes s'affiche par-dessus tout.", schema()),
         Tool("free", "Libère le S22 : arrête l'alarme, les voix et enlève l'écran de blocage.", schema()),
-        Tool("alarm", "Fait sonner une sirène au volume maximum sur le S22.", schema()),
+        Tool(
+            "alarm", "Allume (on=true) ou arrête (on=false) la sirène du S22 au volume maximum. Arrêter l'alarme ne libère PAS le téléphone.",
+            schema(JSONObject().put("on", JSONObject().put("type", "boolean")))
+        ),
         Tool(
             "stolen",
             "Active le mode volé : le S22 se verrouille, répète « j'ai été volé », passe en mode éco et envoie sa position. À n'utiliser que si la personne le demande clairement.",

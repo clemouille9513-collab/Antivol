@@ -375,6 +375,7 @@ class GuardService : Service() {
         try { sensorMgr?.unregisterListener(motionListener) } catch (_: Exception) {}
         sensorMgr = null
         screenOn = false
+        Locator.stopLive(this)
         Lan.stopServer()
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
         wakeLock = null
@@ -409,9 +410,10 @@ class GuardService : Service() {
             when (cmd) {
                 "lock" -> triggerLock("Ordre de la télécommande", force = true)
                 "stolen" -> startStolen()
-                "alarm" -> stolen().start(siren = true, withSpeech = false)
+                "alarm" -> if (arg == "off") stolenMode?.stopSiren() else stolen().start(siren = true, withSpeech = false)
                 "say" -> stolen().say(arg)
                 "locate" -> sendLocation()
+                "live" -> liveLocation(arg == "on")
                 "photo" -> takePhoto(arg != "back", "Demande de la télécommande")
                 "free" -> {
                     val need = Prefs.str(this, "remote_code")
@@ -452,7 +454,7 @@ class GuardService : Service() {
                     }
                 }
             }
-            reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}|${Lan.localIp()}")
+            reply("ack|$cmd|${if (Prefs.isLocked(this)) 1 else 0}|${if (Prefs.isStolen(this)) 1 else 0}|${battery()}|${Lan.localIp()}|${if (stolenMode?.sirenOn == true) 1 else 0}")
         }
         return true
     }
@@ -628,32 +630,31 @@ class GuardService : Service() {
 
     // ---------- Position ----------
 
-    @SuppressLint("MissingPermission")
+    /** Cherche une vraie position fraîche (jamais une ancienne gardée en mémoire) et l'envoie. */
     private fun sendLocation() {
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
-        val lm = getSystemService(LocationManager::class.java) ?: return
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            event("loc", "Position impossible : l'autorisation de position n'est pas donnée sur le S22")
+            return
+        }
+        val lm = getSystemService(LocationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 28 && lm != null && !lm.isLocationEnabled) {
+            event("loc", "La localisation est coupée sur le S22 (réglages rapides) : position impossible")
+        }
+        Locator.fresh(this) { replyLocation(it) }
+    }
 
-        val best = listOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.PASSIVE_PROVIDER
-        ).mapNotNull {
-            try { lm.getLastKnownLocation(it) } catch (_: Exception) { null }
-        }.maxByOrNull { it.time }
-        best?.let { replyLocation(it) }
+    private var liveUntil = 0L
+    private var lastLive = 0L
 
-        for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
-            try {
-                if (!lm.isProviderEnabled(provider)) continue
-                lm.requestSingleUpdate(provider, object : LocationListener {
-                    override fun onLocationChanged(location: Location) = replyLocation(location)
-                    @Deprecated("Deprecated in Java")
-                    override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
-                    override fun onProviderEnabled(p: String) {}
-                    override fun onProviderDisabled(p: String) {}
-                }, Looper.getMainLooper())
-            } catch (_: Exception) {
-            }
+    /** Suivi en direct : une position toutes les ~3 s (12 s s'il n'y a pas de Wi-Fi direct), pendant 10 minutes. */
+    private fun liveLocation(on: Boolean) {
+        if (!on) { liveUntil = 0L; Locator.stopLive(this); return }
+        liveUntil = System.currentTimeMillis() + 600_000L
+        Locator.live(this) { l ->
+            val now = System.currentTimeMillis()
+            if (now > liveUntil) { liveLocation(false); return@live }
+            val gap = if (Lan.active()) 2_500L else 12_000L
+            if (now - lastLive >= gap) { lastLive = now; replyLocation(l) }
         }
     }
 

@@ -71,5 +71,7 @@ dependencies {
     // Reconnaissance du visage : détection (ML Kit) + comparaison (TensorFlow Lite).
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.android.gms:play-services-tasks:18.2.0")
+    // Position précise (le même fournisseur que le point bleu de Google Maps).
+    implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

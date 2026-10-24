@@ -54,6 +54,15 @@ class StolenMode(private val ctx: Context) {
         if (siren && player == null) startSiren()
     }
 
+    val sirenOn: Boolean get() = player != null
+
+    /** Coupe seulement la sirène (les phrases du mode volé continuent s'il est actif). */
+    fun stopSiren() {
+        try { player?.stop() } catch (_: Exception) {}
+        try { player?.release() } catch (_: Exception) {}
+        player = null
+    }
+
     fun stop() {
         running = false
         speech = false
