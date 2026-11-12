@@ -72,6 +72,27 @@ object Lan {
     // =====================================================================
 
     private val lock = Object()
+
+    // Images brutes de l'écran pour la page HTML (une page ouverte = webScreen > 0).
+    private val rawLock = Object()
+    private var raw: ByteArray? = null
+    private var rawSeq = 0L
+    @Volatile var webScreen = 0
+
+    fun pushRaw(b: ByteArray) {
+        synchronized(rawLock) { raw = b; rawSeq++; rawLock.notifyAll() }
+    }
+
+    fun nextRaw(since: Long, waitMs: Long): Pair<Long, ByteArray>? {
+        synchronized(rawLock) {
+            val end = System.currentTimeMillis() + waitMs
+            while (rawSeq <= since && System.currentTimeMillis() < end) {
+                try { rawLock.wait(100) } catch (_: InterruptedException) { return null }
+            }
+            val r = raw
+            return if (r != null && rawSeq > since) rawSeq to r else null
+        }
+    }
     private val outbox = ArrayDeque<Pair<Long, String>>()
     private var seq = 0L
     private var frame: String? = null
@@ -323,10 +344,62 @@ object Lan {
                 )
             }
             "/w/rot" -> {
+                if (q["cam"] == "screen") {
+                    val m = ctx.resources.displayMetrics
+                    val hh = (540f * m.heightPixels / m.widthPixels).toInt()
+                    send(200, "application/json", "{\"rot\":0,\"w\":540,\"h\":$hh}")
+                    return
+                }
                 val (rot, w, h) = CamStream.info(ctx, q["cam"] != "back", q["q"] == "720")
                 send(200, "application/json", "{\"rot\":$rot,\"w\":$w,\"h\":$h}")
             }
             "/w/cam" -> {
+                if (q["cam"] == "screen") {
+                    val pj = ProjectionService.instance?.takeIf { it.ready() }
+                    val shield = ShieldService.instance
+                    if (pj == null && shield == null) {
+                        send(503, "text/plain", "Écran indisponible : la protection renforcée (accessibilité) n'est pas active sur le S22")
+                        return
+                    }
+                    webScreen++
+                    try {
+                        sock.tcpNoDelay = true
+                        out.write(
+                            ("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\n" +
+                                "Cache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").toByteArray()
+                        )
+                        pj?.setStreaming(true)
+                        var since = 0L
+                        var idle = 0
+                        val deadline = System.currentTimeMillis() + 30 * 60_000L
+                        while (System.currentTimeMillis() < deadline) {
+                            var jpg: ByteArray? = null
+                            if (pj != null) {
+                                val f = nextRaw(since, 2_000)
+                                if (f != null) { since = f.first; jpg = f.second }
+                            } else {
+                                // Sans l'autorisation d'enregistrement d'écran : captures par la protection renforcée (environ 3 par seconde).
+                                val latch = java.util.concurrent.CountDownLatch(1)
+                                var got: ByteArray? = null
+                                shield!!.screenshot(540, 55) { b -> got = b; latch.countDown() }
+                                latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                                jpg = got
+                                if (jpg == null) Thread.sleep(400)
+                            }
+                            if (jpg == null) { if (++idle > 8) break; continue }
+                            idle = 0
+                            out.write("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpg.size}\r\n\r\n".toByteArray())
+                            out.write(jpg)
+                            out.write("\r\n".toByteArray())
+                            out.flush()
+                        }
+                    } catch (_: Exception) {
+                    } finally {
+                        webScreen--
+                        if (webScreen <= 0 && !Relay.on) ProjectionService.instance?.setStreaming(false)
+                    }
+                    return
+                }
                 val front = q["cam"] != "back"
                 if (!CamStream.acquire(ctx, front, q["q"] == "720")) {
                     send(503, "text/plain", "Caméra indisponible : ${CamStream.lastError}")

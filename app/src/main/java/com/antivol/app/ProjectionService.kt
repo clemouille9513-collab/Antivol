@@ -115,17 +115,18 @@ class ProjectionService : Service() {
                 val img = try { ir.acquireLatestImage() } catch (_: Exception) { null } ?: return@setOnImageAvailableListener
                 try {
                     val now = System.currentTimeMillis()
-                    if (!streaming || now - lastSent < (if (Relay.on) 30 else 90)) return@setOnImageAvailableListener
+                    if (!streaming || now - lastSent < (if (Relay.on || Lan.webScreen > 0) 30 else 90)) return@setOnImageAvailableListener
                     lastSent = now
                     val p = img.planes[0]
                     val rowPixels = p.rowStride / p.pixelStride
                     val bmp = Bitmap.createBitmap(rowPixels, h, Bitmap.Config.ARGB_8888)
                     bmp.copyPixelsFromBuffer(p.buffer)
                     val out = ByteArrayOutputStream()
-                    Bitmap.createBitmap(bmp, 0, 0, w, h).compress(Bitmap.CompressFormat.JPEG, if (Relay.on) 34 else 45, out)
+                    Bitmap.createBitmap(bmp, 0, 0, w, h).compress(Bitmap.CompressFormat.JPEG, if (Relay.on) 34 else if (Lan.webScreen > 0) 55 else 45, out)
                     bmp.recycle()
                     val jpg = out.toByteArray()
                     if (Relay.on) Relay.frame(jpg)
+                    if (Lan.webScreen > 0) Lan.pushRaw(jpg)
                     Lan.pushFrame(Crypto.encryptBytes(Prefs.secret(this), jpg))
                 } catch (_: Exception) {
                 } finally {

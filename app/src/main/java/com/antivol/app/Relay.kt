@@ -40,6 +40,7 @@ object Relay {
     private var micThread: Thread? = null
     private var appCtx: Context? = null
     private var session = 0
+    @Volatile private var shotMode = false
 
     private fun varLen(n: Int): ByteArray {
         var x = n
@@ -80,13 +81,18 @@ object Relay {
         base = "antivol/" + Crypto.topic(secret, "m")
         src = source
         ready = false
+        shotMode = false
         on = true
         startedAt = System.currentTimeMillis()
         lastKeep = startedAt
 
         if (source == "screen") {
             val pj = ProjectionService.instance
-            if (pj == null || !pj.ready()) { fail(app, "Écran impossible : autorise d'abord « Écran en direct » dans l'appli du S22"); return }
+            if (pj == null || !pj.ready()) {
+                // Pas d'autorisation d'enregistrement d'écran : captures par la protection renforcée (environ 3 par seconde).
+                if (ShieldService.instance == null) { fail(app, "Écran impossible : active la protection renforcée (accessibilité) ou autorise « Écran en direct » sur le S22"); return }
+                shotMode = true
+            }
         }
 
         val url = BROKERS[brokerIdx.coerceIn(0, BROKERS.size - 1)]
@@ -137,7 +143,7 @@ object Relay {
         )
 
         if (mic) startMic(app, mine)
-        if (source != "screen") startCam(app, source == "front", mine) else ProjectionService.instance?.setStreaming(true)
+        if (source != "screen") startCam(app, source == "front", mine) else if (shotMode) startShots(app, mine) else ProjectionService.instance?.setStreaming(true)
 
         val watchdog = object : Runnable {
             override fun run() {
@@ -181,6 +187,20 @@ object Relay {
                 }
             } finally {
                 CamStream.release()
+            }
+        }.also { it.isDaemon = true; it.start() }
+    }
+
+    private fun startShots(app: Context, mine: Int) {
+        camThread = Thread {
+            while (on && mine == session) {
+                val shield = ShieldService.instance ?: break
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var got: ByteArray? = null
+                shield.screenshot(540, 50) { b -> got = b; latch.countDown() }
+                latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                val g = got
+                if (g != null) publish("v", byteArrayOf(0) + g) else Thread.sleep(400)
             }
         }.also { it.isDaemon = true; it.start() }
     }

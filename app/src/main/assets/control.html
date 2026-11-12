@@ -51,6 +51,7 @@
   <div class="card">
     <h2>CAMÉRAS EN DIRECT</h2>
     <div class="row">
+      <button id="bScreen">Écran du S22</button>
       <button id="bFront">Caméra avant</button>
       <button id="bBack">Caméra arrière</button>
       <button id="bStop">Arrêter</button>
@@ -283,6 +284,20 @@
       setTimeout(function () { if (cam.on) note(""); }, 4000);
     }).catch(function () { note("S22 injoignable."); });
   }
+  function startScreen() {
+    cam.front = false; cam.extra = 0; cam.mirror = false;
+    note("Allumage de l'écran du S22…");
+    fetch(url("/w/rot", "&cam=screen")).then(function (r) { return r.json(); }).then(function (i) {
+      cam.rot = 0; cam.w = i.w; cam.h = i.h; layout();
+      var img = $("#camimg");
+      img.onload = function () { note(""); };
+      img.onerror = function () { note("Écran indisponible. Sur le S22 : active la protection renforcée (accessibilité) ou autorise « Écran en direct » dans l'appli."); cam.on = false; };
+      img.src = url("/w/cam", "&cam=screen&t=" + Date.now());
+      cam.on = true;
+      setTimeout(function () { if (cam.on) note(""); }, 4000);
+    }).catch(function () { note("S22 injoignable."); });
+  }
+  $("#bScreen").onclick = startScreen;
   function stopCam() { cam.on = false; $("#camimg").src = BLANK; note(""); $("#fpsbadge").style.display = "none"; }
   $("#bFront").onclick = function () { startCam(true); };
   $("#bBack").onclick = function () { startCam(false); };
