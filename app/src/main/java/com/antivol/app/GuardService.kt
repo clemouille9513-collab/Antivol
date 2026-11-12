@@ -467,7 +467,7 @@ class GuardService : Service() {
                 "relay" -> {
                     val a = arg.split(":")
                     try {
-                        if (a[0] == "stop") Relay.stop() else Relay.start(this, a[0], a.getOrNull(1)?.toIntOrNull() ?: 0)
+                        if (a[0] == "stop") Relay.stop() else Relay.start(this, a[0], a.getOrNull(1)?.toIntOrNull() ?: 0, a.getOrNull(2) != "0")
                     } catch (e: Throwable) { event("rtc", "Direct impossible : ${e.javaClass.simpleName}") }
                 }
                 "shot" -> {

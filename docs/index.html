@@ -142,6 +142,10 @@
     <div class="card">
       <h2>Direct par internet · image + son · marche partout</h2>
       <p style="color:var(--dim);margin:0 0 10px;font-size:13px">Marche à des dizaines de kilomètres, en 4G/5G, sur n'importe quel réseau : l'image (environ 10 par seconde) et le son passent par un serveur public gratuit, chiffrés avec ta clé. Le S22 doit être allumé avec la protection active (l'écran demande d'avoir donné « Écran en direct » dans son appli). Le micro du S22 est transmis avec l'image.</p>
+      <div class="row" style="margin:0 0 10px;align-items:center;flex-wrap:wrap">
+        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="relayMic" checked> Son du micro du S22</label>
+        <label style="display:flex;gap:6px;align-items:center">Volume <input type="range" id="relayVol" min="0" max="2" step="0.1" value="1"></label>
+      </div>
       <div class="actions" style="grid-template-columns:repeat(3,1fr)">
         <button class="act" id="rtcScreen">Écran<small>+ son</small></button>
         <button class="act" id="rtcFront">Caméra avant<small>+ son</small></button>
@@ -149,11 +153,13 @@
       </div>
       <div style="margin-top:10px"><button class="act" id="rtcHd" style="padding:8px 14px;margin-right:6px">Essayer en HD (WebRTC, peut échouer)</button><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
       <div id="rtcBox" style="display:none;margin-top:12px">
-        <img id="relayImg" alt="" style="width:100%;max-height:70vh;object-fit:contain;background:#000;border-radius:12px;display:block">
+        <canvas id="relayCanvas" width="360" height="640" style="width:100%;max-height:75vh;object-fit:contain;background:#000;border-radius:12px;display:block"></canvas>
         <video id="rtcVideo" autoplay playsinline style="width:100%;max-height:70vh;background:#000;border-radius:12px;display:none"></video>
         <div class="row" style="margin-top:8px">
           <span id="rtcState" class="pill" style="flex:1">…</span>
           <button class="primary" id="rtcSound">Activer le son</button>
+          <button class="act" id="relayRec" style="padding:8px 14px">● Enregistrer</button>
+          <button class="act" id="relayShot" style="padding:8px 14px">Capture</button>
           <button class="act" id="rtcRelay" style="padding:8px 14px">Relais</button>
           <button class="act" id="rtcStop" style="padding:8px 14px">Arrêter</button>
         </div>
@@ -190,7 +196,17 @@
     </div>
 
     <div class="card">
-      <h2>Photos</h2>
+      <h2>Surveillance du visage (caméra du S22)</h2>
+      <p style="color:var(--dim);margin:0 0 8px;font-size:13px">Le S22 regarde régulièrement devant lui : si quelqu'un regarde par-dessus l'épaule il cache l'écran, et si le visage n'est pas le tien il verrouille.</p>
+      <div class="actions" style="grid-template-columns:repeat(4,1fr)">
+        <button class="act" data-peek="5">5 s</button><button class="act" data-peek="10">10 s</button>
+        <button class="act" data-peek="15">15 s</button><button class="act" data-peek="30">30 s</button>
+      </div>
+      <div class="row"><button class="act" id="peekOn" style="flex:1">Activer</button><button class="act" id="peekOff" style="flex:1">Désactiver</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Photos <button class="act" id="photosClear" style="float:right;padding:4px 10px;font-size:12px">Tout supprimer</button></h2>
       <div id="photos"></div>
     </div>
   </div>
@@ -329,9 +345,12 @@
       var img = document.createElement("img"); img.src = p.data; img.alt = "Photo du S22";
       img.onclick = function () { $("#big img").src = p.data; $("#big").style.display = "flex"; };
       var c = document.createElement("div"); c.textContent = (p.facing === "front" ? "Avant" : "Arrière") + " · " + fmtTime(p.ts);
-      d.appendChild(img); d.appendChild(c); el.appendChild(d);
+      var x = document.createElement("button"); x.textContent = "Supprimer"; x.className = "act"; x.style.cssText = "padding:4px 8px;font-size:12px;margin-top:4px";
+      x.onclick = function () { photos = photos.filter(function (q) { return q !== p; }); save("antivol_photos", photos); renderPhotos(); };
+      d.appendChild(img); d.appendChild(c); d.appendChild(x); el.appendChild(d);
     });
   }
+  $("#photosClear").onclick = function () { if (photos.length && confirm("Supprimer toutes les photos ?")) { photos = []; save("antivol_photos", photos); renderPhotos(); } };
   $("#big").onclick = function () { this.style.display = "none"; };
 
   // ---------- Réception ----------
@@ -616,6 +635,41 @@
   // ---------- Direct garanti par un serveur relais public (MQTT) ----------
   var mq = null, mqBase = "", mqKeepT = null, mqKey = null, actx = null, nextAudio = 0, frames = 0, fpsT = null, lastUrl = "", firstFrame = false;
   var BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt"];
+  var vIdx = 0, vShown = 0, pend = null, drawing = false, gainNode = null, recDest = null, recorder = null, recChunks = [];
+  function paintFrame() {
+    drawing = false;
+    var f = pend; pend = null; if (!f) return;
+    var cv = $("#relayCanvas"), g = cv.getContext("2d");
+    var sw = f.rot % 180 ? f.bmp.height : f.bmp.width, sh = f.rot % 180 ? f.bmp.width : f.bmp.height;
+    if (cv.width !== sw || cv.height !== sh) { cv.width = sw; cv.height = sh; }
+    g.save(); g.translate(sw / 2, sh / 2); g.scale(f.mirror ? -1 : 1, 1); g.rotate(f.rot * Math.PI / 180);
+    g.drawImage(f.bmp, -f.bmp.width / 2, -f.bmp.height / 2); g.restore();
+    f.bmp.close(); frames++;
+    if (!firstFrame) { firstFrame = true; rtcSay("En direct"); }
+  }
+  function download(blob, name) { var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
+  function stamp() { return new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ""); }
+  function ensureAudio() {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    actx.resume();
+    if (!gainNode) { gainNode = actx.createGain(); gainNode.connect(actx.destination); recDest = actx.createMediaStreamDestination(); gainNode.connect(recDest); }
+    gainNode.gain.value = parseFloat($("#relayVol").value);
+  }
+  $("#relayVol").oninput = function () { if (gainNode) gainNode.gain.value = parseFloat(this.value); };
+  $("#relayShot").onclick = function () { $("#relayCanvas").toBlob(function (b) { if (b) download(b, "antivol-" + stamp() + ".png"); }, "image/png"); };
+  $("#relayRec").onclick = function () {
+    if (recorder) { recorder.stop(); return; }
+    try {
+      ensureAudio();
+      var st = $("#relayCanvas").captureStream(30);
+      recDest.stream.getAudioTracks().forEach(function (t) { st.addTrack(t); });
+      recChunks = [];
+      recorder = new MediaRecorder(st, { mimeType: MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm" });
+      recorder.ondataavailable = function (e) { if (e.data.size) recChunks.push(e.data); };
+      recorder.onstop = function () { download(new Blob(recChunks, { type: "video/webm" }), "antivol-direct-" + stamp() + ".webm"); recorder = null; $("#relayRec").textContent = "● Enregistrer"; };
+      recorder.start(1000); $("#relayRec").textContent = "■ Arrêter l'enregistrement";
+    } catch (e) { toast("Enregistrement impossible sur ce navigateur"); recorder = null; }
+  };
   function ulawDec(b) { b = ~b & 0xFF; var s = b & 0x80, e = (b >> 4) & 7, m = b & 15; var x = (((m << 3) + 132) << e) - 132; return (s ? -x : x) / 32768; }
   function connectMq(url) {
     return new Promise(function (res, rej) {
@@ -641,10 +695,9 @@
     rtcStop(false); relayStop(false);
     mqKey = null; frames = 0; firstFrame = false;
     $("#rtcBox").style.display = "block";
-    $("#relayImg").style.display = "block"; $("#rtcVideo").style.display = "none";
-    $("#relayImg").removeAttribute("src");
+    $("#relayCanvas").style.display = "block"; $("#rtcVideo").style.display = "none";
     rtcSay("Connexion au serveur relais…");
-    try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 }); actx.resume(); } catch (e) {}
+    try { ensureAudio(); } catch (e) {}
     nextAudio = 0;
     mqBase = "antivol/" + await topic("m");
     var idx = -1, lastErr = "";
@@ -653,16 +706,19 @@
     mq.on("message", async function (topic, payload) {
       try {
         if (topic === mqBase + "/v") {
-          var jpg = await decRaw(new Uint8Array(payload));
-          var url = URL.createObjectURL(new Blob([jpg], { type: "image/jpeg" }));
-          var old = lastUrl; lastUrl = url; $("#relayImg").src = url; if (old) URL.revokeObjectURL(old);
-          frames++;
-          if (!firstFrame) { firstFrame = true; rtcSay("En direct"); }
+          var idxV = ++vIdx;
+          var raw = await decRaw(new Uint8Array(payload));
+          var bmp = await createImageBitmap(new Blob([raw.subarray(1)], { type: "image/jpeg" }));
+          if (idxV < vShown) { bmp.close(); return; }
+          vShown = idxV;
+          if (pend) pend.bmp.close();
+          pend = { bmp: bmp, rot: (raw[0] & 3) * 90, mirror: !!(raw[0] & 4) };
+          if (!drawing) { drawing = true; requestAnimationFrame(paintFrame); }
         } else if (topic === mqBase + "/a" && actx) {
           var a = await decRaw(new Uint8Array(payload));
           var buf = actx.createBuffer(1, a.length, 16000), d = buf.getChannelData(0);
           for (var k = 0; k < a.length; k++) d[k] = ulawDec(a[k]);
-          var s = actx.createBufferSource(); s.buffer = buf; s.connect(actx.destination);
+          var s = actx.createBufferSource(); s.buffer = buf; s.connect(gainNode || actx.destination);
           var now = actx.currentTime;
           if (nextAudio < now + 0.1 || nextAudio > now + 1.2) nextAudio = now + 0.25;
           s.start(nextAudio); nextAudio += a.length / 16000;
@@ -673,14 +729,17 @@
     mqKeepT = setInterval(function () { if (mq) mq.publish(mqBase + "/k", "1"); }, 5000);
     mq.publish(mqBase + "/k", "1");
     fpsT = setInterval(function () { if (firstFrame) rtcSay("En direct · " + Math.round(frames / 2) + " images/s"); frames = 0; }, 2000);
-    try { await sendQuiet("relay", src + ":" + idx); } catch (e) { rtcSay("Envoi impossible : pas de connexion internet"); return; }
+    try { await sendQuiet("relay", src + ":" + idx + ":" + ($("#relayMic").checked ? "1" : "0")); } catch (e) { rtcSay("Envoi impossible : pas de connexion internet"); return; }
     rtcSay("Demande envoyée au S22… (jusqu'à 30 s)");
     setTimeout(function () { if (!firstFrame && mq) rtcSay("Pas d'image : S22 éteint, sans internet, ancienne APK, ou « Écran en direct » non autorisé"); }, 40000);
   }
+  document.querySelectorAll("[data-peek]").forEach(function (b) { b.onclick = function () { send("cfg", "peek_interval=" + b.dataset.peek); send("cfg", "peek=1"); }; });
+  $("#peekOn").onclick = function () { send("cfg", "peek=1"); };
+  $("#peekOff").onclick = function () { send("cfg", "peek=0"); };
   $("#rtcScreen").onclick = function () { relayStart("screen"); };
   $("#rtcFront").onclick = function () { relayStart("front"); };
   $("#rtcBack").onclick = function () { relayStart("back"); };
-  $("#rtcHd").onclick = function () { relayStop(true); $("#relayImg").style.display = "none"; $("#rtcVideo").style.display = "block"; rtcStart("screen"); };
+  $("#rtcHd").onclick = function () { relayStop(true); $("#relayCanvas").style.display = "none"; $("#rtcVideo").style.display = "block"; rtcStart("screen"); };
   $("#rtcStop").onclick = function () { rtcStop(true); relayStop(true); $("#rtcBox").style.display = "none"; };
   $("#rtcSound").onclick = function () { try { if (actx) actx.resume(); } catch (e) {} var v = $("#rtcVideo"); v.muted = false; v.volume = 1; v.play(); };
 

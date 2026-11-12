@@ -61,17 +61,17 @@ object Relay {
 
     private fun publish(sub: String, payload: ByteArray) {
         val w = ws ?: return
-        if (!ready || w.queueSize() > 600_000) return // réseau lent : on saute des images plutôt que d'accumuler du retard
+        if (!ready || w.queueSize() > 250_000) return // réseau lent : on saute des images plutôt que d'accumuler du retard
         val enc = Crypto.encryptRaw(secret, payload)
         w.send(packet(0x30, str("$base/$sub") + enc).toByteString())
     }
 
     /** Image d'écran venant de ProjectionService. */
     fun frame(jpeg: ByteArray) {
-        if (on && src == "screen") publish("v", jpeg)
+        if (on && src == "screen") publish("v", byteArrayOf(0) + jpeg)
     }
 
-    fun start(ctx: Context, source: String, brokerIdx: Int) {
+    fun start(ctx: Context, source: String, brokerIdx: Int, mic: Boolean = true) {
         stop()
         val app = ctx.applicationContext
         appCtx = app
@@ -136,7 +136,7 @@ object Relay {
             }
         )
 
-        startMic(app, mine)
+        if (mic) startMic(app, mine)
         if (source != "screen") startCam(app, source == "front", mine) else ProjectionService.instance?.setStreaming(true)
 
         val watchdog = object : Runnable {
@@ -165,6 +165,9 @@ object Relay {
                 return@Thread
             }
             try {
+                // Octet d'en-tête : quart de tour à appliquer (image redressée à la verticale) + 4 si caméra avant (miroir).
+                val rot = try { CamStream.info(app, front, false).first } catch (_: Exception) { 90 }
+                val head = byteArrayOf((((rot / 90) and 3) or (if (front) 4 else 0)).toByte())
                 var since = 0L
                 var last = 0L
                 while (on && mine == session) {
@@ -172,9 +175,9 @@ object Relay {
                     if (r == null) { Thread.sleep(40); continue }
                     since = r.first
                     val now = System.currentTimeMillis()
-                    if (now - last < 70) continue
+                    if (now - last < 28) continue
                     last = now
-                    publish("v", r.second)
+                    publish("v", head + r.second)
                 }
             } finally {
                 CamStream.release()

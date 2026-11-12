@@ -164,7 +164,7 @@ object CamStream {
                     val img = try { ir.acquireLatestImage() } catch (_: Exception) { null }
                     if (img != null) {
                         try {
-                            val bytes = encode(img, quality)
+                            val bytes = encode(img, if (Relay.on) 38 else quality)
                             val now = System.currentTimeMillis()
                             synchronized(lock) {
                                 jpeg = bytes
