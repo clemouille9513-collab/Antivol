@@ -139,6 +139,24 @@
     </div>
 
     <div class="card">
+      <h2>Direct par internet · image + son</h2>
+      <p style="color:var(--dim);margin:0 0 10px;font-size:13px">Marche à des dizaines de kilomètres, sans Wi-Fi : en 4G/5G des deux côtés. Le S22 doit être allumé avec la protection active (l'écran demande d'avoir donné « Écran en direct » dans son appli). Le micro du S22 est transmis avec l'image.</p>
+      <div class="actions" style="grid-template-columns:repeat(3,1fr)">
+        <button class="act" id="rtcScreen">Écran<small>+ son</small></button>
+        <button class="act" id="rtcFront">Caméra avant<small>+ son</small></button>
+        <button class="act" id="rtcBack">Caméra arrière<small>+ son</small></button>
+      </div>
+      <div id="rtcBox" style="display:none;margin-top:12px">
+        <video id="rtcVideo" autoplay playsinline style="width:100%;max-height:70vh;background:#000;border-radius:12px"></video>
+        <div class="row" style="margin-top:8px">
+          <span id="rtcState" class="pill" style="flex:1">…</span>
+          <button class="primary" id="rtcSound">Activer le son</button>
+          <button class="act" id="rtcStop" style="padding:8px 14px">Arrêter</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Caméras en direct · 30 images/s</h2>
       <p style="color:var(--dim);margin:0 0 8px;font-size:13px">La vidéo ne passe pas par internet : elle vient directement du S22, sur le même Wi-Fi. Rien à régler : l'adresse du S22 est reprise de ses signaux, et la clé de liaison est transmise à la page vidéo.</p>
       <div class="say">
@@ -323,6 +341,7 @@
     var ts = parseInt(p[0], 10);
     if (!ts || p.length < 2) return;
     var type = p[1], changed = false;
+    if (type === "rtc") { rtcReply(p); return; }
     // Le S22 annonce son adresse sur le Wi-Fi dans ses signaux : on la garde pour la page vidéo.
     if ((type === "ack" || type === "hb") && /^\d+\.\d+\.\d+\.\d+$/.test(p[6] || "")) {
       try { localStorage.setItem("antivol_ip", p[6]); } catch (e) {}
@@ -483,6 +502,97 @@
     try { localStorage.setItem("antivol_ip", v); } catch (e) {}
     window.open("http://" + v + ":8765/#k=" + encodeURIComponent(secret), "_blank");
   });
+
+
+  // ---------- Direct par internet (WebRTC : image + son) ----------
+  var rtcPc = null, rtcId = "", rtcParts = {}, rtcTimer = null;
+  var RTC_ICE = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }
+  ];
+  function rtcSay(t) { $("#rtcState").textContent = t; }
+  async function zip(str, mode) {
+    // deflate brut + base64 ; préfixe "z" (compressé) ou "r" (brut si le navigateur ne sait pas)
+    if (typeof CompressionStream === "undefined") return "r" + btoa(str);
+    var cs = new Blob([str]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+    return "z" + u8ToB64(new Uint8Array(await new Response(cs).arrayBuffer()));
+  }
+  async function unzip(t) {
+    if (t.charAt(0) === "r") return atob(t.slice(1));
+    var ds = new Blob([b64ToU8(t.slice(1))]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return dec.decode(await new Response(ds).arrayBuffer());
+  }
+  async function sendQuiet(cmd, arg) {
+    var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + arg;
+    var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: await encryptText(plain) });
+    if (!r.ok) throw new Error("ntfy " + r.status);
+  }
+  function rtcStop(tell) {
+    clearTimeout(rtcTimer);
+    if (rtcPc) { try { rtcPc.close(); } catch (e) {} rtcPc = null; }
+    rtcId = ""; rtcParts = {};
+    var v = $("#rtcVideo"); v.srcObject = null;
+    if (tell) sendQuiet("rtc", "stop").catch(function () {});
+  }
+  async function rtcStart(src) {
+    if (!secret) { openKey(); return; }
+    rtcStop(false);
+    $("#rtcBox").style.display = "block";
+    rtcSay("Préparation…");
+    var id = Math.random().toString(36).slice(2, 8);
+    rtcId = id;
+    var pc = new RTCPeerConnection({ iceServers: RTC_ICE });
+    rtcPc = pc;
+    var stream = new MediaStream();
+    pc.ontrack = function (e) {
+      stream.addTrack(e.track);
+      var v = $("#rtcVideo");
+      v.srcObject = stream; v.muted = false;
+      var pr = v.play(); if (pr && pr.catch) pr.catch(function () { v.muted = true; v.play(); rtcSay("Image reçue — touche « Activer le son »"); });
+    };
+    pc.onconnectionstatechange = function () {
+      if (pc !== rtcPc) return;
+      var s = pc.connectionState;
+      if (s === "connected") { rtcSay("En direct"); clearTimeout(rtcTimer); }
+      else if (s === "failed") rtcSay("Connexion impossible (le réseau d'un des deux téléphones bloque le direct)");
+      else if (s === "disconnected") rtcSay("Coupé…");
+    };
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise(function (res) {
+      if (pc.iceGatheringState === "complete") return res();
+      var t = setTimeout(res, 4000);
+      pc.addEventListener("icegatheringstatechange", function () { if (pc.iceGatheringState === "complete") { clearTimeout(t); res(); } });
+    });
+    var packed = await zip(pc.localDescription.sdp);
+    var pieces = [];
+    for (var i = 0; i < packed.length; i += 2400) pieces.push(packed.slice(i, i + 2400));
+    try {
+      for (var k = 0; k < pieces.length; k++) await sendQuiet("rtc", id + ":" + src + ":" + k + ":" + pieces.length + ":" + pieces[k]);
+    } catch (e) { rtcSay("Envoi impossible : pas de connexion internet"); return; }
+    rtcSay("Demande envoyée au S22… (jusqu'à 30 s)");
+    rtcTimer = setTimeout(function () { if (pc === rtcPc && pc.connectionState !== "connected") rtcSay("Pas de réponse : S22 éteint, sans internet, ou ancienne APK"); }, 45000);
+  }
+  async function rtcReply(p) {
+    if (p[2] === "err") { rtcSay(p.slice(4).join("|")); return; }
+    if (p[2] === undefined || !rtcId || p[1] !== rtcId) return;
+    var i = parseInt(p[2], 10), n = parseInt(p[3], 10);
+    var a = rtcParts[p[1]] || (rtcParts[p[1]] = []);
+    a[i] = p.slice(4).join("|");
+    for (var k = 0; k < n; k++) if (a[k] === undefined) return;
+    delete rtcParts[p[1]];
+    try {
+      var sdp = await unzip(a.join(""));
+      rtcSay("Connexion…");
+      await rtcPc.setRemoteDescription({ type: "answer", sdp: sdp });
+    } catch (e) { rtcSay("Réponse illisible : " + e); }
+  }
+  $("#rtcScreen").onclick = function () { rtcStart("screen"); };
+  $("#rtcFront").onclick = function () { rtcStart("front"); };
+  $("#rtcBack").onclick = function () { rtcStart("back"); };
+  $("#rtcStop").onclick = function () { rtcStop(true); $("#rtcBox").style.display = "none"; };
+  $("#rtcSound").onclick = function () { var v = $("#rtcVideo"); v.muted = false; v.volume = 1; v.play(); };
 
   // ---------- Démarrage ----------
   drawMap(true); renderLog(); renderPhotos(); renderStatus();

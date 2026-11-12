@@ -74,4 +74,6 @@ dependencies {
     // Position précise (le même fournisseur que le point bleu de Google Maps).
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    // Vidéo + son en direct par internet (WebRTC), de pair à pair.
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
 }

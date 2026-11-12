@@ -48,8 +48,28 @@ class ProjectionService : Service() {
 
     fun ready() = projection != null && display != null
 
+    @Volatile private var external = false
+
+    /** Envoie l'écran vers une autre surface (WebRTC) ; null = retour au flux habituel. */
+    fun redirectTo(surface: android.view.Surface?, rw: Int, rh: Int) {
+        val d = display ?: return
+        try {
+            val dpi = resources.displayMetrics.densityDpi
+            if (surface != null) {
+                external = true
+                d.resize(rw, rh, dpi)
+                d.surface = surface
+            } else if (external) {
+                external = false
+                d.resize(w, h, dpi)
+                d.surface = if (streaming) reader?.surface else null
+            }
+        } catch (_: Exception) {}
+    }
+
     fun setStreaming(on: Boolean) {
         streaming = on
+        if (external) return
         try { display?.surface = if (on) reader?.surface else null } catch (_: Exception) {}
     }
 

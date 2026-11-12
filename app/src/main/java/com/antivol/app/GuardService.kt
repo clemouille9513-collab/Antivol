@@ -401,6 +401,7 @@ class GuardService : Service() {
         try { sensorMgr?.unregisterListener(motionListener) } catch (_: Exception) {}
         sensorMgr = null
         screenOn = false
+        try { Rtc.stop() } catch (_: Throwable) {}
         Locator.stopLive(this)
         Lan.stopServer()
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
@@ -430,6 +431,12 @@ class GuardService : Service() {
         if (abs(System.currentTimeMillis() / 1000 - ts) > 300) return false
         if (!Prefs.markSeen(this, plain)) return true
         val cmd = p[1]
+        if (cmd == "rtc") {
+            // Vidéo/son en direct par internet : morceaux de l'offre, sans accusé de réception.
+            val a = p.getOrElse(2) { "" }
+            handler.post { try { Rtc.chunk(this, a) } catch (e: Throwable) { event("rtc", "Direct impossible : ${e.javaClass.simpleName}") } }
+            return true
+        }
         val arg = p.getOrElse(2) { "" }.take(200)
 
         handler.post {
