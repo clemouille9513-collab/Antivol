@@ -124,7 +124,9 @@ class ProjectionService : Service() {
                     val out = ByteArrayOutputStream()
                     Bitmap.createBitmap(bmp, 0, 0, w, h).compress(Bitmap.CompressFormat.JPEG, 45, out)
                     bmp.recycle()
-                    Lan.pushFrame(Crypto.encryptBytes(Prefs.secret(this), out.toByteArray()))
+                    val jpg = out.toByteArray()
+                    if (Relay.on) Relay.frame(jpg)
+                    Lan.pushFrame(Crypto.encryptBytes(Prefs.secret(this), jpg))
                 } catch (_: Exception) {
                 } finally {
                     img.close()

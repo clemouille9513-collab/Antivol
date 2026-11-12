@@ -402,6 +402,7 @@ class GuardService : Service() {
         sensorMgr = null
         screenOn = false
         try { Rtc.stop() } catch (_: Throwable) {}
+        try { Relay.stop() } catch (_: Throwable) {}
         Locator.stopLive(this)
         Lan.stopServer()
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
@@ -463,6 +464,12 @@ class GuardService : Service() {
                 "torch" -> torch(arg == "on")
                 "volume" -> setVolume(arg.toIntOrNull() ?: 50)
                 "screen" -> screenCommand(arg == "on")
+                "relay" -> {
+                    val a = arg.split(":")
+                    try {
+                        if (a[0] == "stop") Relay.stop() else Relay.start(this, a[0], a.getOrNull(1)?.toIntOrNull() ?: 0)
+                    } catch (e: Throwable) { event("rtc", "Direct impossible : ${e.javaClass.simpleName}") }
+                }
                 "shot" -> {
                     val shield = ShieldService.instance
                     if (shield == null) event("screen", "Capture impossible : la protection renforcée n'est pas active sur le S22")

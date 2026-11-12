@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
   :root {
     --bg: #0B0E14; --panel: #141923; --panel2: #1B2230; --line: #263044;
@@ -139,16 +140,17 @@
     </div>
 
     <div class="card">
-      <h2>Direct par internet · image + son</h2>
-      <p style="color:var(--dim);margin:0 0 10px;font-size:13px">Marche à des dizaines de kilomètres, sans Wi-Fi : en 4G/5G des deux côtés. Le S22 doit être allumé avec la protection active (l'écran demande d'avoir donné « Écran en direct » dans son appli). Le micro du S22 est transmis avec l'image.</p>
+      <h2>Direct par internet · image + son · marche partout</h2>
+      <p style="color:var(--dim);margin:0 0 10px;font-size:13px">Marche à des dizaines de kilomètres, en 4G/5G, sur n'importe quel réseau : l'image (environ 10 par seconde) et le son passent par un serveur public gratuit, chiffrés avec ta clé. Le S22 doit être allumé avec la protection active (l'écran demande d'avoir donné « Écran en direct » dans son appli). Le micro du S22 est transmis avec l'image.</p>
       <div class="actions" style="grid-template-columns:repeat(3,1fr)">
         <button class="act" id="rtcScreen">Écran<small>+ son</small></button>
         <button class="act" id="rtcFront">Caméra avant<small>+ son</small></button>
         <button class="act" id="rtcBack">Caméra arrière<small>+ son</small></button>
       </div>
-      <div style="margin-top:10px"><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
+      <div style="margin-top:10px"><button class="act" id="rtcHd" style="padding:8px 14px;margin-right:6px">Essayer en HD (WebRTC, peut échouer)</button><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
       <div id="rtcBox" style="display:none;margin-top:12px">
-        <video id="rtcVideo" autoplay playsinline style="width:100%;max-height:70vh;background:#000;border-radius:12px"></video>
+        <img id="relayImg" alt="" style="width:100%;max-height:70vh;object-fit:contain;background:#000;border-radius:12px;display:block">
+        <video id="rtcVideo" autoplay playsinline style="width:100%;max-height:70vh;background:#000;border-radius:12px;display:none"></video>
         <div class="row" style="margin-top:8px">
           <span id="rtcState" class="pill" style="flex:1">…</span>
           <button class="primary" id="rtcSound">Activer le son</button>
@@ -610,11 +612,77 @@
     try { localStorage.setItem("antivol_relay", v.trim()); } catch (e) {}
     toast(v.trim() ? "Relais enregistré" : "Relais effacé");
   };
-  $("#rtcScreen").onclick = function () { rtcStart("screen"); };
-  $("#rtcFront").onclick = function () { rtcStart("front"); };
-  $("#rtcBack").onclick = function () { rtcStart("back"); };
-  $("#rtcStop").onclick = function () { rtcStop(true); $("#rtcBox").style.display = "none"; };
-  $("#rtcSound").onclick = function () { var v = $("#rtcVideo"); v.muted = false; v.volume = 1; v.play(); };
+
+  // ---------- Direct garanti par un serveur relais public (MQTT) ----------
+  var mq = null, mqBase = "", mqKeepT = null, mqKey = null, actx = null, nextAudio = 0, frames = 0, fpsT = null, lastUrl = "", firstFrame = false;
+  var BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt"];
+  function ulawDec(b) { b = ~b & 0xFF; var s = b & 0x80, e = (b >> 4) & 7, m = b & 15; var x = (((m << 3) + 132) << e) - 132; return (s ? -x : x) / 32768; }
+  function connectMq(url) {
+    return new Promise(function (res, rej) {
+      if (typeof mqtt === "undefined") return rej(new Error("bibliothèque MQTT non chargée (pas d'internet ?)"));
+      var c = mqtt.connect(url, { connectTimeout: 8000, reconnectPeriod: 2000, clean: true, keepalive: 20 });
+      var t = setTimeout(function () { try { c.end(true); } catch (e) {} rej(new Error("délai dépassé")); }, 9000);
+      c.once("connect", function () { clearTimeout(t); mq = c; res(); });
+      c.on("error", function () {});
+    });
+  }
+  function relayStop(tell) {
+    clearInterval(mqKeepT); clearInterval(fpsT);
+    if (mq) { try { mq.end(true); } catch (e) {} mq = null; }
+    if (tell) sendQuiet("relay", "stop:0").catch(function () {});
+    if (lastUrl) { URL.revokeObjectURL(lastUrl); lastUrl = ""; }
+  }
+  async function decRaw(u) {
+    if (!mqKey) mqKey = await aesKey();
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: u.slice(0, 12) }, mqKey, u.slice(12)));
+  }
+  async function relayStart(src) {
+    if (!secret) { openKey(); return; }
+    rtcStop(false); relayStop(false);
+    mqKey = null; frames = 0; firstFrame = false;
+    $("#rtcBox").style.display = "block";
+    $("#relayImg").style.display = "block"; $("#rtcVideo").style.display = "none";
+    $("#relayImg").removeAttribute("src");
+    rtcSay("Connexion au serveur relais…");
+    try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 }); actx.resume(); } catch (e) {}
+    nextAudio = 0;
+    mqBase = "antivol/" + await topic("m");
+    var idx = -1, lastErr = "";
+    for (var i = 0; i < BROKERS.length; i++) { try { await connectMq(BROKERS[i]); idx = i; break; } catch (e) { lastErr = e.message || String(e); } }
+    if (idx < 0) { rtcSay("Serveur relais injoignable depuis ce navigateur : " + lastErr); return; }
+    mq.on("message", async function (topic, payload) {
+      try {
+        if (topic === mqBase + "/v") {
+          var jpg = await decRaw(new Uint8Array(payload));
+          var url = URL.createObjectURL(new Blob([jpg], { type: "image/jpeg" }));
+          var old = lastUrl; lastUrl = url; $("#relayImg").src = url; if (old) URL.revokeObjectURL(old);
+          frames++;
+          if (!firstFrame) { firstFrame = true; rtcSay("En direct"); }
+        } else if (topic === mqBase + "/a" && actx) {
+          var a = await decRaw(new Uint8Array(payload));
+          var buf = actx.createBuffer(1, a.length, 16000), d = buf.getChannelData(0);
+          for (var k = 0; k < a.length; k++) d[k] = ulawDec(a[k]);
+          var s = actx.createBufferSource(); s.buffer = buf; s.connect(actx.destination);
+          var now = actx.currentTime;
+          if (nextAudio < now + 0.1 || nextAudio > now + 1.2) nextAudio = now + 0.25;
+          s.start(nextAudio); nextAudio += a.length / 16000;
+        }
+      } catch (e) {}
+    });
+    mq.subscribe([mqBase + "/v", mqBase + "/a"]);
+    mqKeepT = setInterval(function () { if (mq) mq.publish(mqBase + "/k", "1"); }, 5000);
+    mq.publish(mqBase + "/k", "1");
+    fpsT = setInterval(function () { if (firstFrame) rtcSay("En direct · " + Math.round(frames / 2) + " images/s"); frames = 0; }, 2000);
+    try { await sendQuiet("relay", src + ":" + idx); } catch (e) { rtcSay("Envoi impossible : pas de connexion internet"); return; }
+    rtcSay("Demande envoyée au S22… (jusqu'à 30 s)");
+    setTimeout(function () { if (!firstFrame && mq) rtcSay("Pas d'image : S22 éteint, sans internet, ancienne APK, ou « Écran en direct » non autorisé"); }, 40000);
+  }
+  $("#rtcScreen").onclick = function () { relayStart("screen"); };
+  $("#rtcFront").onclick = function () { relayStart("front"); };
+  $("#rtcBack").onclick = function () { relayStart("back"); };
+  $("#rtcHd").onclick = function () { relayStop(true); $("#relayImg").style.display = "none"; $("#rtcVideo").style.display = "block"; rtcStart("screen"); };
+  $("#rtcStop").onclick = function () { rtcStop(true); relayStop(true); $("#rtcBox").style.display = "none"; };
+  $("#rtcSound").onclick = function () { try { if (actx) actx.resume(); } catch (e) {} var v = $("#rtcVideo"); v.muted = false; v.volume = 1; v.play(); };
 
   // ---------- Démarrage ----------
   drawMap(true); renderLog(); renderPhotos(); renderStatus();

@@ -46,6 +46,14 @@ object Crypto {
         return Base64.encodeToString(iv + cipher.doFinal(data), Base64.NO_WRAP)
     }
 
+    /** Comme encryptBytes mais sans base64 (images et son : iv + données chiffrées). */
+    fun encryptRaw(secret: String, data: ByteArray): ByteArray {
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(sha("$secret:enc"), "AES"), GCMParameterSpec(128, iv))
+        return iv + cipher.doFinal(data)
+    }
+
     fun decryptBytes(secret: String, b64: String): ByteArray? = try {
         val raw = Base64.decode(b64.trim(), Base64.NO_WRAP)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
