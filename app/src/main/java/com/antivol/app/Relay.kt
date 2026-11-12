@@ -33,6 +33,10 @@ object Relay {
     )
 
     @Volatile var on = false
+
+    /** Qualité JPEG du direct par internet : baisse si le réseau n'arrive pas à suivre (plus d'images/s), remonte sinon. */
+    @Volatile var q = 34
+    private var okRun = 0
     private val main = Handler(Looper.getMainLooper())
     private var ws: WebSocket? = null
     @Volatile private var ready = false
@@ -67,7 +71,14 @@ object Relay {
 
     private fun publish(sub: String, payload: ByteArray) {
         val w = ws ?: return
-        if (!ready || w.queueSize() > 250_000) return // réseau lent : on saute des images plutôt que d'accumuler du retard
+        if (!ready) return
+        if (w.queueSize() > 120_000) {
+            // réseau lent : on saute l'image (pas de retard accumulé) et on allège les suivantes
+            okRun = 0
+            if (sub == "v" && q > 16) q -= 3
+            return
+        }
+        if (sub == "v" && ++okRun >= 45) { okRun = 0; if (q < 40) q += 1 }
         val enc = Crypto.encryptRaw(secret, payload)
         w.send(packet(0x30, str("$base/$sub") + enc).toByteString())
     }
@@ -87,6 +98,7 @@ object Relay {
         src = source
         ready = false
         shotMode = false
+        q = 30
         on = true
         startedAt = System.currentTimeMillis()
         lastKeep = startedAt
