@@ -25,7 +25,12 @@ import java.util.concurrent.TimeUnit
  * Sans signal de la page pendant 25 secondes, tout s'arrête.
  */
 object Relay {
-    val BROKERS = listOf("wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt")
+    val BROKERS = listOf(
+        "wss://broker.emqx.io:8084/mqtt",
+        "wss://broker.hivemq.com:8884/mqtt",
+        "wss://test.mosquitto.org:8081",
+        "wss://mqtt.eclipseprojects.io/mqtt"
+    )
 
     @Volatile var on = false
     private val main = Handler(Looper.getMainLooper())
@@ -124,8 +129,9 @@ object Relay {
                         }
                         if (buf.size < i + len) return
                         val type = (buf[0].toInt() and 0xFF) shr 4
-                        if (type == 2 && len >= 2 && buf[i + 1].toInt() != 0) {
-                            main.post { if (mine == session) fail(app, "Serveur relais : connexion refusée") }
+                        if (type == 2 && len >= 2) {
+                            if (buf[i + 1].toInt() != 0) main.post { if (mine == session) fail(app, "Serveur relais n°$brokerIdx : connexion refusée") }
+                            else Report.event(app, "rtc", "Téléphone connecté au serveur relais n°$brokerIdx")
                         }
                         if (type == 3) lastKeep = System.currentTimeMillis() // la page regarde encore
                         buf = buf.copyOfRange(i + len, buf.size)
@@ -133,7 +139,7 @@ object Relay {
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    main.post { if (mine == session && on) fail(app, "Serveur relais injoignable (${t.javaClass.simpleName})") }
+                    main.post { if (mine == session && on) fail(app, "Serveur relais n°$brokerIdx injoignable depuis le téléphone (${t.javaClass.simpleName}) : retente") }
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {

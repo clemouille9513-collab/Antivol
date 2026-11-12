@@ -365,6 +365,10 @@
     if (!ts || p.length < 2) return;
     var type = p[1], changed = false;
     if (type === "rtc") { rtcReply(p); return; }
+    if (type === "evt" && p[2] === "rtc") {
+      var m = p.slice(3).join("|"); if (mq) rtcSay(m);
+      if (mq && /injoignable depuis le téléphone|refusée/.test(m) && relayTry < BROKERS.length - 1 && relaySrc) { relayTry++; setTimeout(function () { relayStart(relaySrc, relayTry); }, 1500); }
+    }
     // Le S22 annonce son adresse sur le Wi-Fi dans ses signaux : on la garde pour la page vidéo.
     if ((type === "ack" || type === "hb") && /^\d+\.\d+\.\d+\.\d+$/.test(p[6] || "")) {
       try { localStorage.setItem("antivol_ip", p[6]); } catch (e) {}
@@ -634,7 +638,7 @@
 
   // ---------- Direct garanti par un serveur relais public (MQTT) ----------
   var mq = null, mqBase = "", mqKeepT = null, mqKey = null, actx = null, nextAudio = 0, frames = 0, fpsT = null, lastUrl = "", firstFrame = false;
-  var BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt"];
+  var BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt", "wss://test.mosquitto.org:8081", "wss://mqtt.eclipseprojects.io/mqtt"];
   var vIdx = 0, vShown = 0, pend = null, drawing = false, gainNode = null, recDest = null, recorder = null, recChunks = [];
   function paintFrame() {
     drawing = false;
@@ -690,7 +694,9 @@
     if (!mqKey) mqKey = await aesKey();
     return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: u.slice(0, 12) }, mqKey, u.slice(12)));
   }
-  async function relayStart(src) {
+  var relayTry = 0, relaySrc = "";
+  async function relayStart(src, from) {
+    relaySrc = src; relayTry = from || 0;
     if (!secret) { openKey(); return; }
     rtcStop(false); relayStop(false);
     mqKey = null; frames = 0; firstFrame = false;
@@ -701,8 +707,8 @@
     nextAudio = 0;
     mqBase = "antivol/" + await topic("m");
     var idx = -1, lastErr = "";
-    for (var i = 0; i < BROKERS.length; i++) { try { await connectMq(BROKERS[i]); idx = i; break; } catch (e) { lastErr = e.message || String(e); } }
-    if (idx < 0) { rtcSay("Serveur relais injoignable depuis ce navigateur : " + lastErr); return; }
+    for (var i = relayTry; i < BROKERS.length; i++) { try { await connectMq(BROKERS[i]); idx = i; break; } catch (e) { lastErr = e.message || String(e); } }
+    if (idx < 0) { rtcSay("Serveur relais injoignable depuis ce navigateur (" + lastErr + "). Essaie le Wi-Fi ou un autre navigateur."); return; }
     mq.on("message", async function (topic, payload) {
       try {
         if (topic === mqBase + "/v") {
