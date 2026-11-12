@@ -699,6 +699,17 @@
     relaySrc = src; relayTry = from || 0;
     if (!secret) { openKey(); return; }
     rtcStop(false); relayStop(false);
+    // Même Wi-Fi que le téléphone ? Alors la page directe à 30 images/s est bien meilleure : on l'ouvre toute seule.
+    if (!from && location.protocol !== "https:") {
+      var lip = ""; try { lip = localStorage.getItem("antivol_ip") || ""; } catch (e) {}
+      if (lip) {
+        var lan = await new Promise(function (res) {
+          var ctl = new AbortController(), t = setTimeout(function () { ctl.abort(); res(false); }, 1500);
+          fetch("http://" + lip + ":8765/p", { mode: "no-cors", signal: ctl.signal }).then(function () { clearTimeout(t); res(true); }, function () { clearTimeout(t); res(false); });
+        });
+        if (lan) { toast("Téléphone trouvé sur ton Wi-Fi : ouverture de la page directe à 30 images/s"); window.open("http://" + lip + ":8765/#k=" + encodeURIComponent(secret), "_blank"); return; }
+      }
+    }
     mqKey = null; frames = 0; firstFrame = false;
     $("#rtcBox").style.display = "block";
     $("#relayCanvas").style.display = "block"; $("#rtcVideo").style.display = "none";
