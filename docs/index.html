@@ -365,6 +365,7 @@
     var ts = parseInt(p[0], 10);
     if (!ts || p.length < 2) return;
     var type = p[1], changed = false;
+    touch(ts); // n'importe quel message du téléphone prouve qu'il est en vie
     if (type === "rtc") { rtcReply(p); return; }
     if (type === "evt" && p[2] === "rtc") {
       var m = p.slice(3).join("|"); if (mq) rtcSay(m);
@@ -435,12 +436,19 @@
     if (!secret) { setNet(false, "Clé manquante"); return; }
     var t = await topic("rep");
     es = new EventSource("https://ntfy.sh/" + t + "/sse?since=12h");
-    es.addEventListener("open", function () { setNet(true, "En ligne"); });
+    es.addEventListener("open", function () { setNet(true, "En ligne"); startPing(); });
     es.addEventListener("error", function () { setNet(false, "Reconnexion…"); });
     es.addEventListener("message", function (e) {
       try { var o = JSON.parse(e.data); if (o.message) handle(o.message); } catch (x) {}
     });
   }
+  var pingT = null;
+  function pingPhone() {
+    sendQuiet("status", "").catch(function () {});
+    var l = positions[positions.length - 1];
+    if (!l || Date.now() / 1000 - l.ts > 300) sendQuiet("locate", "").catch(function () {});
+  }
+  function startPing() { clearInterval(pingT); setTimeout(pingPhone, 1500); pingT = setInterval(function () { if (!document.hidden) pingPhone(); }, 120000); }
   function setNet(ok, text) { $("#netdot").className = "dot " + (ok ? "ok" : "bad"); $("#nettext").textContent = text; }
 
   // ---------- Envoi des ordres ----------
