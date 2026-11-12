@@ -246,7 +246,7 @@ object Rtc {
 
     private fun sendAnswer(app: Context, id: String) {
         if (sent) return
-        val sdp = pc?.localDescription?.sdp ?: return
+        val sdp = pc?.localDescription?.description ?: return
         sent = true
         val packed = pack(sdp)
         val pieces = packed.chunked(2400)
