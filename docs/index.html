@@ -151,7 +151,7 @@
         <button class="act" id="rtcFront">Caméra avant<small>+ son</small></button>
         <button class="act" id="rtcBack">Caméra arrière<small>+ son</small></button>
       </div>
-      <div style="margin-top:10px"><button class="act" id="rtcHd" style="padding:8px 14px;margin-right:6px">Essayer en HD (WebRTC, peut échouer)</button><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
+      <div style="margin-top:10px"><button class="act" id="projOff" style="padding:8px 14px;margin-right:6px">Retirer l'autorisation écran 30 i/s</button><button class="act" id="rtcHd" style="padding:8px 14px;margin-right:6px">Essayer en HD (WebRTC, peut échouer)</button><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
       <div id="rtcBox" style="display:none;margin-top:12px">
         <pre id="rtcDiag" style="margin:0 0 8px;font-size:11px;color:var(--dim);white-space:pre-wrap;max-height:120px;overflow:auto"></pre>
         <canvas id="relayCanvas" width="360" height="640" style="width:100%;max-height:75vh;object-fit:contain;background:#000;border-radius:12px;display:block"></canvas>
@@ -759,6 +759,7 @@
   document.querySelectorAll("[data-peek]").forEach(function (b) { b.onclick = function () { send("cfg", "peek_interval=" + b.dataset.peek); send("cfg", "peek=1"); }; });
   $("#peekOn").onclick = function () { send("cfg", "peek=1"); };
   $("#peekOff").onclick = function () { send("cfg", "peek=0"); };
+  $("#projOff").onclick = function () { if (confirm("Retirer l'autorisation d'écran en direct sur le téléphone ? (À redonner ensuite depuis son appli.)")) send("projstop", ""); };
   $("#rtcScreen").onclick = function () { relayStart("screen"); };
   $("#rtcFront").onclick = function () { relayStart("front"); };
   $("#rtcBack").onclick = function () { relayStart("back"); };

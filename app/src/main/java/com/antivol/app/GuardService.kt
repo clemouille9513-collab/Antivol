@@ -464,6 +464,11 @@ class GuardService : Service() {
                 "torch" -> torch(arg == "on")
                 "volume" -> setVolume(arg.toIntOrNull() ?: 50)
                 "screen" -> screenCommand(arg == "on")
+                "projstop" -> {
+                    Relay.stop()
+                    ProjectionService.instance?.disable()
+                    event("screen", "Autorisation d'écran en direct retirée")
+                }
                 "relay" -> {
                     val a = arg.split(":")
                     try {

@@ -199,6 +199,12 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
+    fun disableScreenShare() {
+        ProjectionService.instance?.disable()
+        toast("Autorisation d'écran en direct retirée")
+        tick++
+    }
+
     fun askScreenShare() {
         val mpm = getSystemService(MediaProjectionManager::class.java)
         @Suppress("DEPRECATION")
@@ -412,7 +418,9 @@ private fun Home(act: MainActivity, tick: Int) {
                 )
                 Spacer(Modifier.height(8.dp))
                 StepRow(ProjectionService.instance?.ready() == true, "Écran en direct fluide (10 images/s)",
-                    "À autoriser une fois (et après chaque redémarrage)", "Autoriser") { act.askScreenShare() }
+                    "À autoriser une fois (et après chaque redémarrage)", "Autoriser", doneLabel = "Retirer") {
+                    if (ProjectionService.instance?.ready() == true) act.disableScreenShare() else act.askScreenShare()
+                }
             }
 
             Section("RECONNAISSANCE DU PROPRIÉTAIRE")
@@ -583,7 +591,7 @@ private fun Home(act: MainActivity, tick: Int) {
 @Composable
 private fun StepRow(
     ok: Boolean, title: String, subtitle: String, action: String,
-    last: Boolean = false, onClick: () -> Unit
+    last: Boolean = false, doneLabel: String = "Modifier", onClick: () -> Unit
 ) {
     Row(
         Modifier
@@ -602,7 +610,7 @@ private fun StepRow(
             Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
             Text(subtitle, color = cDim, fontSize = 13.sp)
         }
-        TextButton(onClick = onClick) { Text(if (ok) "Modifier" else action, color = cBlue) }
+        TextButton(onClick = onClick) { Text(if (ok) doneLabel else action, color = cBlue) }
     }
     if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(cPanel))
 }

@@ -145,6 +145,9 @@ class ProjectionService : Service() {
         return START_NOT_STICKY
     }
 
+    /** Retire l'autorisation d'enregistrement d'écran (elle se redonne ensuite depuis l'appli). */
+    fun disable() { cleanup() }
+
     private fun cleanup() {
         streaming = false
         try { display?.release() } catch (_: Exception) {}
