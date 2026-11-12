@@ -337,6 +337,8 @@
       d.appendChild(i); d.appendChild(s); d.appendChild(t); el.appendChild(d);
     });
   }
+  function delIds() { return load("antivol_photo_del", []); }
+  function markDeleted(id) { var d = delIds(); if (d.indexOf(id) < 0) { d.push(id); save("antivol_photo_del", d.slice(-300)); } }
   function renderPhotos() {
     var el = $("#photos");
     if (!photos.length) { el.innerHTML = '<div class="empty">Aucune photo reçue.</div>'; return; }
@@ -347,11 +349,11 @@
       img.onclick = function () { $("#big img").src = p.data; $("#big").style.display = "flex"; };
       var c = document.createElement("div"); c.textContent = (p.facing === "front" ? "Avant" : "Arrière") + " · " + fmtTime(p.ts);
       var x = document.createElement("button"); x.textContent = "Supprimer"; x.className = "act"; x.style.cssText = "padding:4px 8px;font-size:12px;margin-top:4px";
-      x.onclick = function () { photos = photos.filter(function (q) { return q !== p; }); save("antivol_photos", photos); renderPhotos(); };
+      x.onclick = function () { markDeleted(p.id); photos = photos.filter(function (q) { return q !== p; }); save("antivol_photos", photos); renderPhotos(); };
       d.appendChild(img); d.appendChild(c); d.appendChild(x); el.appendChild(d);
     });
   }
-  $("#photosClear").onclick = function () { if (photos.length && confirm("Supprimer toutes les photos ?")) { photos = []; save("antivol_photos", photos); renderPhotos(); } };
+  $("#photosClear").onclick = function () { if (photos.length && confirm("Supprimer toutes les photos ?")) { photos.forEach(function (q) { markDeleted(q.id); }); photos = []; save("antivol_photos", photos); renderPhotos(); } };
   $("#big").onclick = function () { this.style.display = "none"; };
 
   // ---------- Réception ----------
@@ -410,7 +412,7 @@
       touch(ts); changed = true;
     } else if (type === "photo" && p.length >= 7) {
       var id = p[2], idx = parseInt(p[3], 10), n = parseInt(p[4], 10), facing = p[5], chunk = p.slice(6).join("|");
-      if (photos.some(function (x) { return x.id === id; })) return;
+      if (photos.some(function (x) { return x.id === id; }) || delIds().indexOf(id) >= 0) return;
       var a = assembling[id] || (assembling[id] = { n: n, facing: facing, parts: {} });
       a.parts[idx] = chunk;
       if (Object.keys(a.parts).length === a.n) {

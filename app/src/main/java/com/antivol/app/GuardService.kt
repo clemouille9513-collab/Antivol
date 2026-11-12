@@ -741,7 +741,16 @@ class GuardService : Service() {
         PhotoCapture(this).capture(front) { bytes ->
             handler.post { try { marker?.let { wm.removeView(it) } } catch (_: Exception) {} }
             if (bytes == null) {
-                event("photo", "Photo impossible : Android a refusé l'accès à la caméra")
+                // Secours : on prend une image du flux caméra, qui marche aussi quand l'appli est en arrière-plan.
+                Thread {
+                    val ok = CamStream.acquire(this, front, true)
+                    val f = if (ok) CamStream.next(0L, 3000) else null
+                    CamStream.release()
+                    handler.post {
+                        if (f != null) sendPhoto(f.second, front, why)
+                        else event("photo", "Photo impossible : Android refuse la caméra (${CamStream.lastError.ifEmpty { "accès refusé" }})")
+                    }
+                }.start()
             } else {
                 sendPhoto(bytes, front, why)
             }
