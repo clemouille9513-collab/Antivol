@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Antivol · Contrôle</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#151a24; --panel2:#1d2431; --txt:#e8ecf3; --dim:#8a94a6; --blue:#3d7bff; --red:#e11d2e; --green:#2ecc71; --orange:#f39c12; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.4 system-ui, sans-serif; padding:14px; max-width:720px; margin:auto; }
+  h1 { font-size:20px; margin:4px 0 12px; }
+  h2 { font-size:12px; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; font-weight:600; }
+  .card { background:var(--panel); border-radius:16px; padding:14px; margin-bottom:12px; }
+  input, select { width:100%; background:var(--panel2); border:1px solid #2a3344; color:var(--txt); border-radius:12px; padding:12px; font:inherit; margin-bottom:8px; }
+  button { background:var(--panel2); color:var(--txt); border:1px solid #2a3344; border-radius:12px; padding:12px 10px; font:inherit; cursor:pointer; }
+  button:active { transform:scale(.98); }
+  button.primary { background:var(--blue); border-color:var(--blue); width:100%; font-weight:600; }
+  button.red { background:var(--red); border-color:var(--red); font-weight:700; }
+  button.on { background:var(--green); border-color:var(--green); color:#04210f; font-weight:700; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .pill { display:inline-block; padding:3px 9px; border-radius:999px; background:var(--panel2); margin:0 6px 6px 0; font-size:13px; }
+  .pill.bad { background:#4a1118; color:#ff8a94; } .pill.good { background:#0f3a22; color:#7be0a4; }
+  #wrap { position:relative; width:100%; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; max-height:75vh; margin:0 auto; }
+  #camimg { position:absolute; top:50%; left:50%; width:100%; transform:translate(-50%,-50%); }
+  #camnote { position:absolute; left:8px; bottom:8px; right:8px; font-size:12px; background:rgba(0,0,0,.6); padding:4px 8px; border-radius:8px; display:none; }
+  #fpsbadge { position:absolute; top:8px; right:8px; background:rgba(0,0,0,.6); border-radius:8px; padding:3px 8px; font-size:12px; display:none; z-index:2; }
+  #toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#222a38; padding:10px 16px; border-radius:12px; display:none; z-index:9; max-width:90%; }
+  small { color:var(--dim); }
+  a { color:var(--blue); }
+</style>
+</head>
+<body>
+<h1>Antivol · Contrôle du S22</h1>
+
+<div class="card" id="conn">
+  <h2>CONNEXION</h2>
+  <div id="ipbox"><input id="ip" placeholder="Adresse du S22 (ex. 192.168.1.20)" inputmode="decimal" autocomplete="off"></div>
+  <input id="key" placeholder="Clé de liaison (XXXX-XXXX-XXXX)" autocomplete="off" autocapitalize="characters">
+  <button class="primary" id="go">Connecter</button>
+  <div id="cstat" style="margin-top:8px"><small>Même Wi-Fi que le S22 obligatoire. La clé est dans l'appli Antivol du S22 : « Clé de liaison ».</small></div>
+</div>
+
+<div id="main" hidden>
+  <div class="card">
+    <h2>ÉTAT</h2>
+    <span class="pill" id="pLock">Verrouillage ?</span><span class="pill" id="pStolen">Volé ?</span><span class="pill" id="pBatt">Batterie ?</span><span class="pill" id="pLink">Liaison ?</span>
+  </div>
+
+  <div class="card">
+    <h2>CAMÉRAS EN DIRECT</h2>
+    <div class="row">
+      <button id="bFront">Caméra avant</button>
+      <button id="bBack">Caméra arrière</button>
+      <button id="bStop">Arrêter</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <select id="qual"><option value="480">480p · 30 i/s (fluide)</option><option value="720">720p · plus net</option></select>
+      <button id="bRot">↻ Tourner</button>
+      <button id="bMir">⇋ Miroir</button>
+      <button id="bFull">⛶ Plein écran</button>
+    </div>
+    <div id="wrap" style="margin-top:10px"><div id="fpsbadge"></div><img id="camimg" alt=""><div id="camnote"></div></div>
+    <small>La caméra ne s'allume que pendant que tu regardes. Le S22 envoie jusqu'à 30 images par seconde, sans passer par internet.</small>
+  </div>
+
+  <div class="card">
+    <h2>ORDRES</h2>
+    <div class="grid">
+      <button id="bLock" class="red">Verrouiller</button>
+      <button id="bAlarm">Alarme</button>
+      <button id="bLocate">Localiser</button>
+      <button id="bLive">Suivi GPS en direct</button>
+      <button id="bTorch">Lampe</button>
+      <button id="bAir">Mode avion</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="freeCode" placeholder="Code de libération (si défini)" style="margin:0">
+      <button id="bFree">Libérer</button>
+    </div>
+    <div class="row" style="margin-top:8px"><button id="bStolen" class="red">VOLÉ (mode vol)</button></div>
+  </div>
+
+  <div class="card">
+    <h2>FAIRE AGIR LE S22</h2>
+    <div class="row"><input id="say" placeholder="Phrase dite à voix haute" style="margin:0"><button id="bSay">Dire</button></div>
+    <div class="row" style="margin-top:8px"><input id="app" placeholder="Ouvrir une appli (ex. YouTube)" style="margin:0"><button id="bApp">Ouvrir</button></div>
+    <div class="row" style="margin-top:8px"><input id="url" placeholder="Ouvrir un lien (ex. google.com)" style="margin:0"><button id="bUrl">Ouvrir</button></div>
+    <div style="margin-top:10px">Volume : <span id="volv">50</span> %<input id="vol" type="range" min="0" max="100" value="50" style="padding:0"></div>
+  </div>
+
+  <div class="card">
+    <h2>POSITION</h2>
+    <div id="loc"><small>Aucune position reçue. Appuie sur « Localiser ».</small></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  var $ = function (s) { return document.querySelector(s); };
+  function load(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  // ----- SHA-256 (le navigateur n'a pas le droit d'utiliser crypto.subtle sur une page http) -----
+  function sha256(ascii) {
+    function rr(v, a) { return (v >>> a) | (v << (32 - a)); }
+    var m = Math.pow, mw = m(2, 32), i, j, r = "", w = [], al = ascii.length * 8;
+    var h = sha256.h = sha256.h || [], k = sha256.k = sha256.k || [], pc = k.length, ic = {};
+    for (var c = 2; pc < 64; c++) {
+      if (!ic[c]) {
+        for (i = 0; i < 313; i += c) ic[i] = c;
+        h[pc] = (m(c, .5) * mw) | 0; k[pc++] = (m(c, 1 / 3) * mw) | 0;
+      }
+    }
+    ascii += "\x80";
+    while (ascii.length % 64 - 56) ascii += "\x00";
+    for (i = 0; i < ascii.length; i++) { j = ascii.charCodeAt(i); if (j >> 8) return; w[i >> 2] |= j << ((3 - i) % 4) * 8; }
+    w[w.length] = ((al / mw) | 0); w[w.length] = al;
+    for (j = 0; j < w.length;) {
+      var wt = w.slice(j, j += 16), old = h;
+      h = h.slice(0, 8);
+      for (i = 0; i < 64; i++) {
+        var w15 = wt[i - 15], w2 = wt[i - 2], a = h[0], e = h[4];
+        var t1 = h[7] + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & h[5]) ^ ((~e) & h[6])) + k[i] +
+          (wt[i] = (i < 16) ? wt[i] : (wt[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) + wt[i - 7] + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0);
+        var t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & h[1]) ^ (a & h[2]) ^ (h[1] & h[2]));
+        h = [(t1 + t2) | 0].concat(h);
+        h[4] = (h[4] + t1) | 0;
+      }
+      for (i = 0; i < 8; i++) h[i] = (h[i] + old[i]) | 0;
+    }
+    for (i = 0; i < 8; i++) for (j = 3; j + 1; j--) { var b = (h[i] >> (j * 8)) & 255; r += ((b < 16) ? 0 : "") + b.toString(16); }
+    return r;
+  }
+  window.__sha256 = sha256;
+
+  var served = location.protocol === "http:" && location.port === "8765";
+  var base = "", token = "", poll = null, state = {}, ver = 0;
+  var cam = { on: false, front: true, rot: 90, w: 640, h: 480, extra: 0, mirror: true };
+
+  if (served) $("#ipbox").style.display = "none";
+  $("#ip").value = load("antivol_ip");
+  $("#key").value = load("antivol_key");
+
+  function toast(t) { var e = $("#toast"); e.textContent = t; e.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(function () { e.style.display = "none"; }, 2800); }
+  function say(t, bad) { $("#cstat").innerHTML = "<small style='color:" + (bad ? "#ff8a94" : "#8a94a6") + "'>" + t + "</small>"; }
+  function url(path, extra) { return base + path + "?k=" + token + (extra || ""); }
+
+  if (location.protocol === "https:") {
+    say("Cette page est ouverte en https : le navigateur bloque la liaison avec le S22. Ouvre-la depuis le S22 : http://adresse-du-S22:8765/ (ou enregistre cette page en fichier et ouvre le fichier).", true);
+  }
+
+  // ----- Connexion -----
+  $("#go").onclick = function () {
+    var key = $("#key").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (key.length !== 12) { say("La clé fait 12 caractères.", true); return; }
+    var ip = $("#ip").value.trim();
+    if (!served) {
+      if (!ip) { say("Entre l'adresse du S22 (visible dans la télécommande : ligne « direct Wi-Fi »).", true); return; }
+      base = "http://" + ip.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "") + ":8765";
+    }
+    token = sha256(key + ":web").slice(0, 32);
+    say("Connexion…");
+    fetch(url("/w/state")).then(function (r) {
+      if (r.status === 403) { say("Clé incorrecte.", true); return null; }
+      return r.json();
+    }).then(function (s) {
+      if (!s) return;
+      store("antivol_key", key); store("antivol_ip", ip);
+      $("#main").hidden = false; $("#conn").style.display = "none";
+      apply(s);
+      if (poll) clearInterval(poll);
+      poll = setInterval(refresh, 1500);
+    }).catch(function () {
+      say("S22 injoignable. Même Wi-Fi ? Protection active sur le S22 ? Adresse correcte ?", true);
+    });
+  };
+
+  function refresh() {
+    fetch(url("/w/state")).then(function (r) { return r.json(); }).then(apply).catch(function () {
+      var p = $("#pLink"); p.textContent = "Liaison perdue"; p.className = "pill bad";
+    });
+  }
+
+  function pill(id, text, bad) { var p = $(id); p.textContent = text; p.className = "pill " + (bad === null ? "" : bad ? "bad" : "good"); }
+  function apply(s) {
+    state = s;
+    pill("#pLock", s.locked ? "Verrouillé" : "Libre", s.locked ? true : false);
+    pill("#pStolen", s.stolen ? "Mode volé" : "Pas volé", s.stolen ? true : false);
+    pill("#pBatt", "Batterie " + s.batt + " %", s.batt >= 0 && s.batt < 15);
+    pill("#pLink", "Direct Wi-Fi", false);
+    $("#bAlarm").textContent = s.siren ? "Arrêter l'alarme" : "Alarme";
+    $("#bAlarm").className = s.siren ? "on" : "";
+    var f = $("#fpsbadge");
+    if (cam.on) { f.style.display = "block"; f.textContent = (s.fps || 0) + " i/s"; } else f.style.display = "none";
+    if (s.loc) {
+      var p = s.loc.split(","), lat = p[0], lon = p[1], acc = p[2], ts = parseInt(p[3], 10);
+      var age = Math.max(0, Math.round(Date.now() / 1000 - ts));
+      $("#loc").innerHTML = "<b>" + (+lat).toFixed(5) + ", " + (+lon).toFixed(5) + "</b> · précision ±" + acc + " m · il y a " + (age < 90 ? age + " s" : Math.round(age / 60) + " min") +
+        "<br><a href='https://www.google.com/maps/search/?api=1&query=" + lat + "," + lon + "' target='_blank'>Ouvrir dans Google Maps</a> · <a href='https://www.openstreetmap.org/?mlat=" + lat + "&mlon=" + lon + "#map=18/" + lat + "/" + lon + "' target='_blank'>OpenStreetMap</a>";
+    }
+  }
+
+  // ----- Ordres -----
+  function cmd(c, a, quiet) {
+    fetch(url("/w/cmd", "&c=" + encodeURIComponent(c) + "&a=" + encodeURIComponent(a || ""))).then(function (r) {
+      if (!quiet) toast(r.ok ? "Ordre envoyé : " + c : "Refusé (" + r.status + ")");
+      setTimeout(refresh, 700);
+    }).catch(function () { toast("S22 injoignable"); });
+  }
+  var torch = false, live = false, air = false;
+  $("#bLock").onclick = function () { cmd("lock"); };
+  $("#bAlarm").onclick = function () { cmd("alarm", state.siren ? "off" : "on"); };
+  $("#bLocate").onclick = function () { cmd("locate"); toast("Recherche de la position (jusqu'à 25 s)…"); };
+  $("#bLive").onclick = function () { live = !live; cmd("live", live ? "on" : "off"); this.className = live ? "on" : ""; };
+  $("#bTorch").onclick = function () { torch = !torch; cmd("torch", torch ? "on" : "off"); this.className = torch ? "on" : ""; };
+  $("#bAir").onclick = function () {
+    if (!air && !confirm("Le mode avion coupe la connexion : le S22 ne répondra plus. Continuer ?")) return;
+    air = !air; cmd("avion", air ? "on" : "off"); this.className = air ? "on" : "";
+  };
+  $("#bFree").onclick = function () { cmd("free", $("#freeCode").value.trim()); };
+  $("#bStolen").onclick = function () { if (confirm("Activer le mode volé ?")) cmd("stolen"); };
+  $("#bSay").onclick = function () { var t = $("#say").value.trim(); if (t) cmd("say", t); };
+  $("#bApp").onclick = function () { var t = $("#app").value.trim(); if (t) cmd("app", t); };
+  $("#bUrl").onclick = function () { var t = $("#url").value.trim(); if (t) cmd("url", t); };
+  $("#vol").oninput = function () { $("#volv").textContent = this.value; };
+  $("#vol").onchange = function () { cmd("volume", this.value); };
+
+  // ----- Caméras -----
+  var BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+  function layout() {
+    var rot = (cam.rot + cam.extra) % 360, vertical = rot % 180 !== 0;
+    var wrap = $("#wrap"), img = $("#camimg");
+    wrap.style.aspectRatio = vertical ? cam.h + " / " + cam.w : cam.w + " / " + cam.h;
+    img.style.width = vertical ? (cam.w / cam.h * 100) + "%" : "100%";
+    img.style.transform = "translate(-50%,-50%)" + (cam.front && cam.mirror ? " scaleX(-1)" : "") + " rotate(" + rot + "deg)";
+  }
+  function note(t) { var n = $("#camnote"); n.textContent = t; n.style.display = t ? "block" : "none"; }
+  function startCam(front) {
+    var q = $("#qual").value;
+    cam.front = front; cam.extra = 0; cam.mirror = front;
+    note("Allumage de la caméra " + (front ? "avant" : "arrière") + "…");
+    fetch(url("/w/rot", "&cam=" + (front ? "front" : "back") + "&q=" + q)).then(function (r) { return r.json(); }).then(function (i) {
+      cam.rot = i.rot; cam.w = i.w; cam.h = i.h; layout();
+      var img = $("#camimg");
+      img.onload = function () { note(""); };
+      img.onerror = function () {
+        note("Caméra indisponible. Vérifie sur le S22 : autorisation caméra, « Affichage par-dessus » et que personne d'autre n'utilise la caméra.");
+        cam.on = false;
+      };
+      img.src = url("/w/cam", "&cam=" + (front ? "front" : "back") + "&q=" + q + "&t=" + Date.now());
+      cam.on = true;
+      setTimeout(function () { if (cam.on) note(""); }, 4000);
+    }).catch(function () { note("S22 injoignable."); });
+  }
+  function stopCam() { cam.on = false; $("#camimg").src = BLANK; note(""); $("#fpsbadge").style.display = "none"; }
+  $("#bFront").onclick = function () { startCam(true); };
+  $("#bBack").onclick = function () { startCam(false); };
+  $("#bStop").onclick = stopCam;
+  $("#bRot").onclick = function () { cam.extra = (cam.extra + 90) % 360; layout(); };
+  $("#bMir").onclick = function () { cam.mirror = !cam.mirror; layout(); };
+  $("#bFull").onclick = function () { var w = $("#wrap"); (w.requestFullscreen || w.webkitRequestFullscreen || function () {}).call(w); };
+  $("#qual").onchange = function () { if (cam.on) startCam(cam.front); };
+  window.addEventListener("beforeunload", function () { $("#camimg").src = BLANK; });
+})();
+</script>
+</body>
+</html>

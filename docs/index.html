@@ -139,6 +139,15 @@
     </div>
 
     <div class="card">
+      <h2>Caméras en direct · 30 images/s</h2>
+      <p style="color:var(--dim);margin:0 0 8px;font-size:13px">La vidéo ne passe pas par internet : elle vient directement du S22, sur le même Wi-Fi. Entre l'adresse du S22 (visible dans l'appli télécommande : ligne « direct Wi-Fi »).</p>
+      <div class="say">
+        <input type="text" id="liveIp" placeholder="Adresse du S22, ex. 192.168.1.20">
+        <button class="primary" id="liveGo">Ouvrir la page vidéo</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Actions</h2>
       <div class="actions">
         <button class="act danger" id="aStolen">VOLÉ<small>Verrouille, voix en boucle, écran en éco</small></button>
@@ -146,6 +155,8 @@
         <button class="act" data-cmd="alarm">Alarme<small>Sirène au maximum</small></button>
         <button class="act" data-cmd="status">Batterie<small>Niveau et état</small></button>
         <button class="act" data-cmd="locate">Localiser<small>Position maintenant</small></button>
+        <button class="act" data-cmd="live" data-toggle="1">Suivi GPS<small>Position en direct (2 h)</small></button>
+        <button class="act" data-cmd="torch" data-toggle="1">Lampe<small>Allume / éteint</small></button>
         <button class="act" data-cmd="photo" data-arg="front">Photo avant<small>Caméra selfie</small></button>
         <button class="act" data-cmd="photo" data-arg="back">Photo arrière<small>Caméra principale</small></button>
         <button class="act free" data-cmd="free">Libérer<small>Arrête tout</small></button>
@@ -395,6 +406,17 @@
   }
   document.querySelectorAll(".act[data-cmd]").forEach(function (b) {
     b.addEventListener("click", function () {
+      if (b.dataset.toggle) {
+        var on = b.dataset.on !== "1"; b.dataset.on = on ? "1" : "0"; b.style.outline = on ? "2px solid var(--green)" : "none";
+        send(b.dataset.cmd, on ? "on" : "off"); return;
+      }
+      if (b.dataset.cmd === "free") {
+        var code = ""; try { code = localStorage.getItem("antivol_free") || ""; } catch (e) {}
+        var c2 = prompt("Code de libération (laisse vide s'il n'y en a pas)", code);
+        if (c2 === null) return;
+        try { localStorage.setItem("antivol_free", c2); } catch (e) {}
+        send("free", c2); return;
+      }
       if (b.dataset.cmd === "alarm") { status.alarm = !status.alarm; renderAlarm(); send("alarm", status.alarm ? "on" : "off"); return; }
       send(b.dataset.cmd, b.dataset.arg || "");
     });
@@ -428,6 +450,17 @@
   setInterval(renderStatus, 30000);
   if (!secret) openKey(); else connect();
 })();
+  (function () {
+    var ip = document.getElementById("liveIp"), go = document.getElementById("liveGo");
+    if (!ip || !go) return;
+    try { ip.value = localStorage.getItem("antivol_ip") || ""; } catch (e) {}
+    go.addEventListener("click", function () {
+      var v = ip.value.trim().replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+      if (!v) { toast("Entre l'adresse du S22"); return; }
+      try { localStorage.setItem("antivol_ip", v); } catch (e) {}
+      window.open("http://" + v + ":8765/", "_blank");
+    });
+  })();
 </script>
 </body>
 </html>
