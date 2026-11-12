@@ -130,7 +130,7 @@
 
   <div class="col">
     <div class="card">
-      <h2>État du S22</h2>
+      <h2>État du téléphone</h2>
       <div class="stats">
         <div class="stat"><div class="k">Verrouillage</div><div class="v" id="sLock">?</div></div>
         <div class="stat"><div class="k">Mode volé</div><div class="v" id="sStolen">?</div></div>
@@ -141,9 +141,9 @@
 
     <div class="card">
       <h2>Direct par internet · image + son · marche partout</h2>
-      <p style="color:var(--dim);margin:0 0 10px;font-size:13px">Marche à des dizaines de kilomètres, en 4G/5G, sur n'importe quel réseau : l'image (environ 10 par seconde) et le son passent par un serveur public gratuit, chiffrés avec ta clé. Le S22 doit être allumé avec la protection active (l'écran demande d'avoir donné « Écran en direct » dans son appli). Le micro du S22 est transmis avec l'image.</p>
+      <p style="color:var(--dim);margin:0 0 10px;font-size:13px">Marche à des dizaines de kilomètres, en 4G/5G, sur n'importe quel réseau : l'image (environ 10 par seconde) et le son passent par un serveur public gratuit, chiffrés avec ta clé. Le téléphone doit être allumé avec la protection active (l'écran demande d'avoir donné « Écran en direct » dans son appli). Le micro du téléphone est transmis avec l'image.</p>
       <div class="row" style="margin:0 0 10px;align-items:center;flex-wrap:wrap">
-        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="relayMic" checked> Son du micro du S22</label>
+        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="relayMic" checked> Son du micro du téléphone</label>
         <label style="display:flex;gap:6px;align-items:center">Volume <input type="range" id="relayVol" min="0" max="2" step="0.1" value="1"></label>
       </div>
       <div class="actions" style="grid-template-columns:repeat(3,1fr)">
@@ -153,6 +153,7 @@
       </div>
       <div style="margin-top:10px"><button class="act" id="rtcHd" style="padding:8px 14px;margin-right:6px">Essayer en HD (WebRTC, peut échouer)</button><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
       <div id="rtcBox" style="display:none;margin-top:12px">
+        <pre id="rtcDiag" style="margin:0 0 8px;font-size:11px;color:var(--dim);white-space:pre-wrap;max-height:120px;overflow:auto"></pre>
         <canvas id="relayCanvas" width="360" height="640" style="width:100%;max-height:75vh;object-fit:contain;background:#000;border-radius:12px;display:block"></canvas>
         <video id="rtcVideo" autoplay playsinline style="width:100%;max-height:70vh;background:#000;border-radius:12px;display:none"></video>
         <div class="row" style="margin-top:8px">
@@ -168,9 +169,9 @@
 
     <div class="card">
       <h2>Caméras en direct · 30 images/s</h2>
-      <p style="color:var(--dim);margin:0 0 8px;font-size:13px">La vidéo ne passe pas par internet : elle vient directement du S22, sur le même Wi-Fi. Rien à régler : l'adresse du S22 est reprise de ses signaux, et la clé de liaison est transmise à la page vidéo.</p>
+      <p style="color:var(--dim);margin:0 0 8px;font-size:13px">La vidéo ne passe pas par internet : elle vient directement du téléphone, sur le même Wi-Fi. Rien à régler : l'adresse du téléphone est reprise de ses signaux, et la clé de liaison est transmise à la page vidéo.</p>
       <div class="say">
-        <input type="text" id="liveIp" placeholder="Adresse du S22 (trouvée automatiquement)">
+        <input type="text" id="liveIp" placeholder="Adresse du téléphone (trouvée automatiquement)">
         <button class="primary" id="liveGo">Ouvrir la page vidéo</button>
       </div>
     </div>
@@ -190,14 +191,14 @@
         <button class="act free" data-cmd="free">Libérer<small>Arrête tout</small></button>
       </div>
       <div class="say">
-        <input type="text" id="sayText" placeholder="Phrase à dire à voix haute sur le S22" maxlength="200">
+        <input type="text" id="sayText" placeholder="Phrase à dire à voix haute sur le téléphone" maxlength="200">
         <button class="primary" id="sayBtn">Parler</button>
       </div>
     </div>
 
     <div class="card">
-      <h2>Surveillance du visage (caméra du S22)</h2>
-      <p style="color:var(--dim);margin:0 0 8px;font-size:13px">Le S22 regarde régulièrement devant lui : si quelqu'un regarde par-dessus l'épaule il cache l'écran, et si le visage n'est pas le tien il verrouille.</p>
+      <h2>Surveillance du visage (caméra du téléphone)</h2>
+      <p style="color:var(--dim);margin:0 0 8px;font-size:13px">Le téléphone regarde régulièrement devant lui : si quelqu'un regarde par-dessus l'épaule il cache l'écran, et si le visage n'est pas le tien il verrouille.</p>
       <div class="actions" style="grid-template-columns:repeat(4,1fr)">
         <button class="act" data-peek="5">5 s</button><button class="act" data-peek="10">10 s</button>
         <button class="act" data-peek="15">15 s</button><button class="act" data-peek="30">30 s</button>
@@ -215,7 +216,7 @@
 <div class="modal" id="keyModal">
   <div class="box">
     <h3>Clé de liaison</h3>
-    <p>Dans l'appli Antivol du S22, ouvre « Clé de liaison » et recopie les 12 caractères ici. La clé reste sur cet appareil et chiffre tous les messages.</p>
+    <p>Dans l'appli Antivol du téléphone, ouvre « Clé de liaison » et recopie les 12 caractères ici. La clé reste sur cet appareil et chiffre tous les messages.</p>
     <input type="text" id="keyInput" placeholder="XXXX-XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
     <div class="row"><button id="keyCancel">Annuler</button><button class="ok" id="keySave">Enregistrer</button></div>
   </div>
@@ -223,7 +224,7 @@
 <div class="modal" id="stolenModal">
   <div class="box">
     <h3>Déclarer le téléphone volé ?</h3>
-    <p>Le S22 se verrouille, l'écran passe au plus bas, il répète à voix haute qu'il a été volé et envoie sa position toutes les 3 minutes. Seuls tes codes ou le bouton « Libérer » l'arrêtent.</p>
+    <p>Le téléphone se verrouille, l'écran passe au plus bas, il répète à voix haute qu'il a été volé et envoie sa position toutes les 3 minutes. Seuls tes codes ou le bouton « Libérer » l'arrêtent.</p>
     <div class="row"><button id="stolenNo">Annuler</button><button class="go" id="stolenYes">Oui, il est volé</button></div>
   </div>
 </div>
@@ -342,7 +343,7 @@
     el.innerHTML = "";
     photos.slice().reverse().forEach(function (p) {
       var d = document.createElement("div"); d.className = "ph";
-      var img = document.createElement("img"); img.src = p.data; img.alt = "Photo du S22";
+      var img = document.createElement("img"); img.src = p.data; img.alt = "Photo du téléphone";
       img.onclick = function () { $("#big img").src = p.data; $("#big").style.display = "flex"; };
       var c = document.createElement("div"); c.textContent = (p.facing === "front" ? "Avant" : "Arrière") + " · " + fmtTime(p.ts);
       var x = document.createElement("button"); x.textContent = "Supprimer"; x.className = "act"; x.style.cssText = "padding:4px 8px;font-size:12px;margin-top:4px";
@@ -369,7 +370,7 @@
       var m = p.slice(3).join("|"); if (mq) rtcSay(m);
       if (mq && /injoignable depuis le téléphone|refusée/.test(m) && relayTry < BROKERS.length - 1 && relaySrc) { relayTry++; setTimeout(function () { relayStart(relaySrc, relayTry); }, 1500); }
     }
-    // Le S22 annonce son adresse sur le Wi-Fi dans ses signaux : on la garde pour la page vidéo.
+    // Le téléphone annonce son adresse sur le Wi-Fi dans ses signaux : on la garde pour la page vidéo.
     if ((type === "ack" || type === "hb") && /^\d+\.\d+\.\d+\.\d+$/.test(p[6] || "")) {
       try { localStorage.setItem("antivol_ip", p[6]); } catch (e) {}
       fillIp();
@@ -448,7 +449,7 @@
     var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + (arg || "");
     try {
       var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: await encryptText(plain) });
-      toast(r.ok ? "Ordre « " + cmd + " » envoyé au S22" : "Envoi refusé (" + r.status + ")");
+      toast(r.ok ? "Ordre « " + cmd + " » envoyé au téléphone" : "Envoi refusé (" + r.status + ")");
     } catch (e) { toast("Envoi impossible : pas de connexion"); }
   }
   function renderAlarm() {
@@ -496,13 +497,13 @@
     connect();
   };
 
-  // ---------- Page vidéo directe : l'adresse du S22 est trouvée toute seule ----------
+  // ---------- Page vidéo directe : l'adresse du téléphone est trouvée toute seule ----------
   var liveIp = $("#liveIp");
   function fillIp() {
     try { var v = localStorage.getItem("antivol_ip") || ""; if (v && liveIp && document.activeElement !== liveIp) liveIp.value = v; } catch (e) {}
   }
   fillIp();
-  /** Le S22 annonce son adresse sur un canal secret dérivé de la clé : on la lit sans rien déchiffrer. */
+  /** Le téléphone annonce son adresse sur un canal secret dérivé de la clé : on la lit sans rien déchiffrer. */
   async function findIp() {
     if (!secret) return "";
     try {
@@ -524,7 +525,7 @@
   $("#liveGo").addEventListener("click", async function () {
     var v = liveIp.value.trim().replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
     if (!v) v = await findIp();
-    if (!v) { toast("Adresse du S22 introuvable : il faut la dernière APK sur le S22, avec internet. Tu peux aussi la taper à la main."); return; }
+    if (!v) { toast("Adresse du téléphone introuvable : il faut la dernière APK sur le téléphone, avec internet. Tu peux aussi la taper à la main."); return; }
     liveIp.value = v;
     try { localStorage.setItem("antivol_ip", v); } catch (e) {}
     window.open("http://" + v + ":8765/#k=" + encodeURIComponent(secret), "_blank");
@@ -538,7 +539,12 @@
     { urls: ["turn:freestun.net:3478", "turns:freestun.net:5349"], username: "free", credential: "free" },
     { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }
   ];
-  function rtcSay(t) { $("#rtcState").textContent = t; }
+  var diagLog = [];
+  function rtcSay(t) {
+    $("#rtcState").textContent = t;
+    diagLog.push(new Date().toLocaleTimeString("fr-FR") + "  " + t); if (diagLog.length > 25) diagLog.shift();
+    var d = $("#rtcDiag"); if (d) d.textContent = diagLog.join("\n");
+  }
   async function zip(str, mode) {
     // deflate brut + base64 ; préfixe "z" (compressé) ou "r" (brut si le navigateur ne sait pas)
     if (typeof CompressionStream === "undefined") return "r" + btoa(str);
@@ -611,8 +617,8 @@
     try {
       for (var k = 0; k < pieces.length; k++) await sendQuiet("rtc", id + ":" + src + ":" + k + ":" + pieces.length + ":" + pieces[k]);
     } catch (e) { rtcSay("Envoi impossible : pas de connexion internet"); return; }
-    rtcSay("Demande envoyée au S22… (jusqu'à 30 s)");
-    rtcTimer = setTimeout(function () { if (pc === rtcPc && pc.connectionState !== "connected") rtcSay("Pas de réponse : S22 éteint, sans internet, ou ancienne APK"); }, 45000);
+    rtcSay("Étape 3/4 : demande envoyée au téléphone par internet (serveur relais n°" + (idx + 1) + " OK de mon côté)… attente de sa réponse");
+    rtcTimer = setTimeout(function () { if (pc === rtcPc && pc.connectionState !== "connected") rtcSay("Pas de réponse : téléphone éteint, sans internet, ou ancienne APK"); }, 45000);
   }
   async function rtcReply(p) {
     if (p[2] === "err") { rtcSay(p.slice(4).join("|")); return; }
@@ -649,7 +655,7 @@
     g.save(); g.translate(sw / 2, sh / 2); g.scale(f.mirror ? -1 : 1, 1); g.rotate(f.rot * Math.PI / 180);
     g.drawImage(f.bmp, -f.bmp.width / 2, -f.bmp.height / 2); g.restore();
     f.bmp.close(); frames++;
-    if (!firstFrame) { firstFrame = true; rtcSay("En direct"); }
+    if (!firstFrame) { firstFrame = true; rtcSay("Étape 4/4 : première image reçue, en direct"); }
   }
   function download(blob, name) { var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
   function stamp() { return new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ""); }
@@ -713,7 +719,7 @@
     mqKey = null; frames = 0; firstFrame = false;
     $("#rtcBox").style.display = "block";
     $("#relayCanvas").style.display = "block"; $("#rtcVideo").style.display = "none";
-    rtcSay("Connexion au serveur relais…");
+    rtcSay("Étape 1/4 : connexion de cette page au serveur relais…");
     try { ensureAudio(); } catch (e) {}
     nextAudio = 0;
     mqBase = "antivol/" + await topic("m");
@@ -747,8 +753,8 @@
     mq.publish(mqBase + "/k", "1");
     fpsT = setInterval(function () { if (firstFrame) rtcSay("En direct · " + Math.round(frames / 2) + " images/s"); frames = 0; }, 2000);
     try { await sendQuiet("relay", src + ":" + idx + ":" + ($("#relayMic").checked ? "1" : "0")); } catch (e) { rtcSay("Envoi impossible : pas de connexion internet"); return; }
-    rtcSay("Demande envoyée au S22… (jusqu'à 30 s)");
-    setTimeout(function () { if (!firstFrame && mq) rtcSay("Pas d'image : S22 éteint, sans internet, ancienne APK, ou « Écran en direct » non autorisé"); }, 40000);
+    rtcSay("Demande envoyée au téléphone… (jusqu'à 30 s)");
+    setTimeout(function () { if (!firstFrame && mq) rtcSay("Pas d'image au bout de 40 s : le téléphone n'a pas répondu (éteint, sans internet, protection non activée, ou ancienne APK). Les lignes ci-dessus disent jusqu'où ça a marché"); }, 40000);
   }
   document.querySelectorAll("[data-peek]").forEach(function (b) { b.onclick = function () { send("cfg", "peek_interval=" + b.dataset.peek); send("cfg", "peek=1"); }; });
   $("#peekOn").onclick = function () { send("cfg", "peek=1"); };
