@@ -70,6 +70,29 @@ class GuardService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var airplaneOkUntil = 0L
 
+    private var lastIpSent = ""
+    private var lastIpAt = 0L
+
+    /**
+     * Annonce l'adresse Wi-Fi du S22 sur un canal secret (nom dérivé de la clé de liaison) :
+     * la page HTML la retrouve avec la seule clé. Envoyée au démarrage, à chaque changement d'adresse
+     * et toutes les 30 minutes (ntfy garde les messages 12 h).
+     */
+    private val ipRunnable = object : Runnable {
+        override fun run() {
+            try {
+                val ip = Lan.localIp()
+                val now = System.currentTimeMillis()
+                if (ip.isNotEmpty() && (ip != lastIpSent || now - lastIpAt > 1_800_000)) {
+                    lastIpSent = ip
+                    lastIpAt = now
+                    Ntfy.publish(Crypto.topic(Prefs.secret(this@GuardService), "ip"), ip)
+                }
+            } catch (_: Exception) {}
+            handler.postDelayed(this, 60_000)
+        }
+    }
+
     /** Signal de vie envoyé toutes les 5 minutes : la télécommande sait que le S22 est joignable. */
     private val hbRunnable = object : Runnable {
         override fun run() {
@@ -309,6 +332,8 @@ class GuardService : Service() {
         // Détection des regards : une photo avant à intervalle réglable quand l'écran est allumé.
         handler.removeCallbacks(peekRunnable)
         handler.postDelayed(peekRunnable, peekEvery())
+        handler.removeCallbacks(ipRunnable)
+        handler.postDelayed(ipRunnable, 6_000)
 
         if (!registered) {
             val filter = IntentFilter().apply {

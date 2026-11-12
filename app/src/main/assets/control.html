@@ -152,28 +152,21 @@
     say("Cette page est ouverte en https : le navigateur bloque la liaison avec le S22. Ouvre-la depuis le S22 : http://adresse-du-S22:8765/ (ou enregistre cette page en fichier et ouvre le fichier).", true);
   }
 
-  // ----- Trouver l'adresse du S22 avec la seule clé (ses signaux passent chiffrés par ntfy.sh) -----
-  function hex2bytes(h) { var a = new Uint8Array(h.length / 2); for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16); return a; }
+  // ----- Trouver l'adresse du S22 avec la seule clé : il l'annonce sur un canal secret dérivé de la clé -----
   function discover(key) {
-    if (!(window.crypto && crypto.subtle)) return Promise.reject("page non sécurisée");
-    var topic = "antivol-" + sha256(key + ":rep").slice(0, 32);
-    return fetch("https://ntfy.sh/" + topic + "/json?poll=1&since=12h").then(function (r) { return r.text(); }).then(function (t) {
-      return crypto.subtle.importKey("raw", hex2bytes(sha256(key + ":enc")), "AES-GCM", false, ["decrypt"]).then(function (ck) {
-        var lines = t.trim().split("\n").reverse(), n = 0;
-        function next() {
-          if (n >= lines.length) return Promise.reject("aucun signal");
-          var line = lines[n++], o;
-          try { o = JSON.parse(line); } catch (e) { return next(); }
-          if (o.event !== "message") return next();
-          var raw; try { raw = Uint8Array.from(atob(o.message.trim()), function (c) { return c.charCodeAt(0); }); } catch (e) { return next(); }
-          return crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, ck, raw.slice(12)).then(function (pt) {
-            var p = new TextDecoder().decode(pt).split("|");
-            if ((p[1] === "ack" || p[1] === "hb") && /^\d+\.\d+\.\d+\.\d+$/.test(p[6] || "")) return p[6];
-            return next();
-          }, next);
-        }
-        return next();
-      });
+    var topic = "antivol-" + sha256(key + ":ip").slice(0, 32);
+    return fetch("https://ntfy.sh/" + topic + "/json?poll=1&since=12h").then(function (r) {
+      if (!r.ok) return Promise.reject("ntfy.sh a répondu " + r.status);
+      return r.text();
+    }).then(function (t) {
+      var lines = t.trim().split("\n").reverse();
+      for (var n = 0; n < lines.length; n++) {
+        try {
+          var o = JSON.parse(lines[n]), m = (o.message || "").trim();
+          if (o.event === "message" && /^\d+\.\d+\.\d+\.\d+$/.test(m)) return m;
+        } catch (e) {}
+      }
+      return Promise.reject("le S22 n'a rien annoncé ces 12 dernières heures (éteint, sans internet, ou ancienne version de l'appli)");
     });
   }
   window.__discover = discover;
@@ -186,8 +179,8 @@
     if (!served) {
       if (!ip) {
         say("Recherche du S22 avec ta clé…");
-        discover(key).then(function (found) { $("#ip").value = found; $("#go").onclick(); }, function () {
-          say("Adresse du S22 introuvable toute seule (S22 éteint, sans internet, ou page ouverte sans cadenas). Entre-la à la main ou ouvre la page depuis le S22.", true);
+        discover(key).then(function (found) { $("#ip").value = found; $("#go").onclick(); }, function (why) {
+          say("Adresse du S22 introuvable : " + (typeof why === "string" ? why : "pas d'accès à internet depuis cette page") + ". Entre-la à la main ci-dessus.", true);
           $("#ipbox").style.display = "block";
         });
         return;
@@ -197,7 +190,8 @@
     token = sha256(key + ":web").slice(0, 32);
     say("Connexion…");
     fetch(url("/w/state")).then(function (r) {
-      if (r.status === 403) { say("Clé incorrecte.", true); return null; }
+      if (r.status === 403) { say("Clé incorrecte (c'est celle affichée dans « Clé de liaison » sur le S22).", true); return null; }
+      if (r.status === 404) { say("Le S22 répond mais son appli est trop ancienne : installe la dernière APK.", true); return null; }
       return r.json();
     }).then(function (s) {
       if (!s) return;
@@ -207,7 +201,8 @@
       if (poll) clearInterval(poll);
       poll = setInterval(refresh, 1500);
     }).catch(function () {
-      say("S22 injoignable. Même Wi-Fi ? Protection active sur le S22 ? Adresse correcte ?", true);
+      say("S22 injoignable à l'adresse " + (served ? location.host : base.replace("http://", "")) + ". Même Wi-Fi ? Protection active ? APK à jour sur le S22 ? Si l'adresse a changé, entre la bonne ci-dessus.", true);
+      $("#ipbox").style.display = served ? "none" : "block";
     });
   };
 

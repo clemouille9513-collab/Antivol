@@ -456,9 +456,30 @@
     try { var v = localStorage.getItem("antivol_ip") || ""; if (v && liveIp && document.activeElement !== liveIp) liveIp.value = v; } catch (e) {}
   }
   fillIp();
-  $("#liveGo").addEventListener("click", function () {
+  /** Le S22 annonce son adresse sur un canal secret dérivé de la clé : on la lit sans rien déchiffrer. */
+  async function findIp() {
+    if (!secret) return "";
+    try {
+      var r = await fetch("https://ntfy.sh/" + await topic("ip") + "/json?poll=1&since=12h");
+      var lines = (await r.text()).trim().split("\n").reverse();
+      for (var n = 0; n < lines.length; n++) {
+        try {
+          var o = JSON.parse(lines[n]), m = (o.message || "").trim();
+          if (o.event === "message" && /^\d+\.\d+\.\d+\.\d+$/.test(m)) {
+            try { localStorage.setItem("antivol_ip", m); } catch (e) {}
+            return m;
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return "";
+  }
+  findIp().then(function (v) { if (v) fillIp(); });
+  $("#liveGo").addEventListener("click", async function () {
     var v = liveIp.value.trim().replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
-    if (!v) { toast("Pas encore de signal du S22 : attends quelques secondes (il envoie son adresse toutes les 20 s)"); return; }
+    if (!v) v = await findIp();
+    if (!v) { toast("Adresse du S22 introuvable : il faut la dernière APK sur le S22, avec internet. Tu peux aussi la taper à la main."); return; }
+    liveIp.value = v;
     try { localStorage.setItem("antivol_ip", v); } catch (e) {}
     window.open("http://" + v + ":8765/#k=" + encodeURIComponent(secret), "_blank");
   });
