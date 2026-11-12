@@ -746,10 +746,30 @@ class GuardService : Service() {
     private fun sendPhoto(bytes: ByteArray, front: Boolean, why: String) =
         sendImage(bytes, if (front) "front" else "back", why)
 
-    private fun sendImage(bytes: ByteArray, facing: String, why: String) {
+    /** Réduit une photo pour qu'elle tienne en peu de messages (ntfy limite chaque message à 4 Ko et le nombre par minute). */
+    private fun shrink(bytes: ByteArray): ByteArray {
+        if (bytes.size <= 45_000) return bytes
+        return try {
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return bytes
+            val w = minOf(640, bmp.width)
+            val h = (bmp.height * (w.toFloat() / bmp.width)).toInt()
+            val sc = if (w == bmp.width) bmp else android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
+            var q = 55
+            var out: ByteArray
+            do {
+                val bo = java.io.ByteArrayOutputStream()
+                sc.compress(android.graphics.Bitmap.CompressFormat.JPEG, q, bo)
+                out = bo.toByteArray()
+                q -= 10
+            } while (out.size > 45_000 && q >= 25)
+            out
+        } catch (_: Throwable) { bytes }
+    }
+
+    private fun sendImage(raw: ByteArray, facing: String, why: String) {
+        val bytes = shrink(raw)
         val secret = Prefs.secret(this)
-        val enc = Crypto.encryptBytes(secret, bytes)
-        val chunks = enc.chunked(2600)
+        val chunks = Crypto.encryptBytes(secret, bytes).chunked(2600)
         val id = System.currentTimeMillis() / 1000
         val label = when (facing) { "front" -> "Photo avant"; "back" -> "Photo arrière"; else -> "Capture d'écran" }
         event("photo", "$label envoyée ($why)")
