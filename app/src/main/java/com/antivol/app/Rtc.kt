@@ -37,7 +37,9 @@ import java.util.zip.Inflater
 object Rtc {
     private val main = Handler(Looper.getMainLooper())
 
-    private fun servers(): List<PeerConnection.IceServer> = listOf(
+    private fun servers(extra: List<PeerConnection.IceServer> = emptyList()): List<PeerConnection.IceServer> = extra + listOf(
+        PeerConnection.IceServer.builder(listOf("turn:freestun.net:3478", "turns:freestun.net:5349"))
+            .setUsername("free").setPassword("free").createIceServer(),
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
         PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
         PeerConnection.IceServer.builder(
@@ -126,8 +128,26 @@ object Rtc {
         arr[i] = p[4]
         if (arr.all { it != null }) {
             parts.remove(id)
-            val sdp = unpack(arr.joinToString("")) ?: return
-            start(ctx.applicationContext, id, p[1], sdp)
+            val raw = unpack(arr.joinToString("")) ?: return
+            var sdp = raw
+            val extra = ArrayList<PeerConnection.IceServer>()
+            try {
+                if (raw.startsWith("{")) {
+                    val o = org.json.JSONObject(raw)
+                    sdp = o.getString("s")
+                    val a = o.optJSONArray("i")
+                    for (k in 0 until (a?.length() ?: 0)) {
+                        val e = a!!.getJSONObject(k)
+                        val u = e.opt("urls")
+                        val urls = if (u is org.json.JSONArray) List(u.length()) { j -> u.getString(j) } else listOf(u.toString())
+                        val b = PeerConnection.IceServer.builder(urls)
+                        if (e.has("username")) b.setUsername(e.getString("username"))
+                        if (e.has("credential")) b.setPassword(e.getString("credential"))
+                        extra.add(b.createIceServer())
+                    }
+                }
+            } catch (_: Exception) {}
+            start(ctx.applicationContext, id, p[1], sdp, extra)
         }
         if (parts.size > 4) parts.clear()
     }
@@ -145,7 +165,7 @@ object Rtc {
         override fun onSetFailure(e: String?) {}
     }
 
-    private fun start(app: Context, id: String, src: String, offer: String) {
+    private fun start(app: Context, id: String, src: String, offer: String, extra: List<PeerConnection.IceServer>) {
         stop()
         val mine = ++session
         sent = false
@@ -156,13 +176,15 @@ object Rtc {
                 fail(app, id, "Écran impossible : autorise d'abord « Écran en direct » dans l'appli du S22"); return
             }
 
-            val cfg = PeerConnection.RTCConfiguration(servers()).apply {
+            val cfg = PeerConnection.RTCConfiguration(servers(extra)).apply {
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
                 continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
             }
             val obs = object : PeerConnection.Observer {
                 override fun onSignalingChange(s: PeerConnection.SignalingState?) {}
-                override fun onIceConnectionChange(s: PeerConnection.IceConnectionState?) {}
+                override fun onIceConnectionChange(s: PeerConnection.IceConnectionState?) {
+                    if (s == PeerConnection.IceConnectionState.FAILED) Report.event(app, "rtc", "Direct : les deux réseaux n'arrivent pas à se joindre (il faut un relais, voir le bouton « Relais » de la page)")
+                }
                 override fun onIceConnectionReceivingChange(b: Boolean) {}
                 override fun onIceGatheringChange(s: PeerConnection.IceGatheringState?) {
                     if (s == PeerConnection.IceGatheringState.COMPLETE) main.post { if (mine == session) sendAnswer(app, id) }

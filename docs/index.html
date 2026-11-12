@@ -146,11 +146,13 @@
         <button class="act" id="rtcFront">Caméra avant<small>+ son</small></button>
         <button class="act" id="rtcBack">Caméra arrière<small>+ son</small></button>
       </div>
+      <div style="margin-top:10px"><button class="act" id="rtcRelay2" style="padding:8px 14px" onclick="document.getElementById('rtcRelay').click()">Relais (si ça ne se connecte pas)</button></div>
       <div id="rtcBox" style="display:none;margin-top:12px">
         <video id="rtcVideo" autoplay playsinline style="width:100%;max-height:70vh;background:#000;border-radius:12px"></video>
         <div class="row" style="margin-top:8px">
           <span id="rtcState" class="pill" style="flex:1">…</span>
           <button class="primary" id="rtcSound">Activer le son</button>
+          <button class="act" id="rtcRelay" style="padding:8px 14px">Relais</button>
           <button class="act" id="rtcStop" style="padding:8px 14px">Arrêter</button>
         </div>
       </div>
@@ -505,9 +507,10 @@
 
 
   // ---------- Direct par internet (WebRTC : image + son) ----------
-  var rtcPc = null, rtcId = "", rtcParts = {}, rtcTimer = null;
+  var rtc_diag = "", rtcPc = null, rtcId = "", rtcParts = {}, rtcTimer = null;
   var RTC_ICE = [
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    { urls: ["turn:freestun.net:3478", "turns:freestun.net:5349"], username: "free", credential: "free" },
     { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }
   ];
   function rtcSay(t) { $("#rtcState").textContent = t; }
@@ -541,7 +544,16 @@
     rtcSay("Préparation…");
     var id = Math.random().toString(36).slice(2, 8);
     rtcId = id;
-    var pc = new RTCPeerConnection({ iceServers: RTC_ICE });
+    var servers = RTC_ICE.slice();
+    var relayUrl = ""; try { relayUrl = localStorage.getItem("antivol_relay") || ""; } catch (e) {}
+    if (relayUrl) {
+      try {
+        rtcSay("Récupération du relais…");
+        var rr = await fetch(relayUrl); var rl = await rr.json();
+        if (Array.isArray(rl)) servers = rl.concat(servers); else if (rl.iceServers) servers = rl.iceServers.concat(servers);
+      } catch (e) { toast("Relais injoignable : lien incorrect ?"); }
+    }
+    var pc = new RTCPeerConnection({ iceServers: servers });
     rtcPc = pc;
     var stream = new MediaStream();
     pc.ontrack = function (e) {
@@ -554,7 +566,7 @@
       if (pc !== rtcPc) return;
       var s = pc.connectionState;
       if (s === "connected") { rtcSay("En direct"); clearTimeout(rtcTimer); }
-      else if (s === "failed") rtcSay("Connexion impossible (le réseau d'un des deux téléphones bloque le direct)");
+      else if (s === "failed") rtcSay("Connexion impossible (" + rtc_diag + "). " + (/relais : 0/.test(rtc_diag) ? "Aucun relais ne répond : touche « Relais » pour en ajouter un gratuit." : "Le réseau d'un des téléphones bloque le direct : ajoute un relais (bouton « Relais »)."));
       else if (s === "disconnected") rtcSay("Coupé…");
     };
     pc.addTransceiver("video", { direction: "recvonly" });
@@ -565,7 +577,10 @@
       var t = setTimeout(res, 4000);
       pc.addEventListener("icegatheringstatechange", function () { if (pc.iceGatheringState === "complete") { clearTimeout(t); res(); } });
     });
-    var packed = await zip(pc.localDescription.sdp);
+    var sdpText = pc.localDescription.sdp;
+    var nSrflx = (sdpText.match(/ typ srflx/g) || []).length, nRelay = (sdpText.match(/ typ relay/g) || []).length;
+    rtc_diag = "adresses publiques : " + nSrflx + " · relais : " + nRelay;
+    var packed = await zip(JSON.stringify({ s: sdpText, i: servers }));
     var pieces = [];
     for (var i = 0; i < packed.length; i += 2400) pieces.push(packed.slice(i, i + 2400));
     try {
@@ -588,6 +603,13 @@
       await rtcPc.setRemoteDescription({ type: "answer", sdp: sdp });
     } catch (e) { rtcSay("Réponse illisible : " + e); }
   }
+  $("#rtcRelay").onclick = function () {
+    var cur = ""; try { cur = localStorage.getItem("antivol_relay") || ""; } catch (e) {}
+    var v = prompt("Lien du relais gratuit (metered.ca > TURN Server > « Get credentials URL »). Vide = aucun.", cur);
+    if (v === null) return;
+    try { localStorage.setItem("antivol_relay", v.trim()); } catch (e) {}
+    toast(v.trim() ? "Relais enregistré" : "Relais effacé");
+  };
   $("#rtcScreen").onclick = function () { rtcStart("screen"); };
   $("#rtcFront").onclick = function () { rtcStart("front"); };
   $("#rtcBack").onclick = function () { rtcStart("back"); };
