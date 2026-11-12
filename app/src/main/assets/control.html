@@ -36,10 +36,10 @@
 
 <div class="card" id="conn">
   <h2>CONNEXION</h2>
-  <div id="ipbox"><input id="ip" placeholder="Adresse du S22 (ex. 192.168.1.20)" inputmode="decimal" autocomplete="off"></div>
+  <div id="ipbox"><input id="ip" placeholder="Adresse du S22 (trouvée automatiquement si tu laisses vide)" inputmode="decimal" autocomplete="off"></div>
   <input id="key" placeholder="Clé de liaison (XXXX-XXXX-XXXX)" autocomplete="off" autocapitalize="characters">
   <button class="primary" id="go">Connecter</button>
-  <div id="cstat" style="margin-top:8px"><small>Même Wi-Fi que le S22 obligatoire. La clé est dans l'appli Antivol du S22 : « Clé de liaison ».</small></div>
+  <div id="cstat" style="margin-top:8px"><small>Il suffit de la clé de liaison (appli Antivol du S22 : « Clé de liaison »). Même Wi-Fi que le S22.</small></div>
 </div>
 
 <div id="main" hidden>
@@ -140,7 +140,7 @@
   var base = "", token = "", poll = null, state = {}, ver = 0;
   var cam = { on: false, front: true, rot: 90, w: 640, h: 480, extra: 0, mirror: true };
 
-  if (served) $("#ipbox").style.display = "none";
+  $("#ipbox").style.display = "none";
   $("#ip").value = load("antivol_ip");
   $("#key").value = load("antivol_key");
 
@@ -152,13 +152,46 @@
     say("Cette page est ouverte en https : le navigateur bloque la liaison avec le S22. Ouvre-la depuis le S22 : http://adresse-du-S22:8765/ (ou enregistre cette page en fichier et ouvre le fichier).", true);
   }
 
+  // ----- Trouver l'adresse du S22 avec la seule clé (ses signaux passent chiffrés par ntfy.sh) -----
+  function hex2bytes(h) { var a = new Uint8Array(h.length / 2); for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16); return a; }
+  function discover(key) {
+    if (!(window.crypto && crypto.subtle)) return Promise.reject("page non sécurisée");
+    var topic = "antivol-" + sha256(key + ":rep").slice(0, 32);
+    return fetch("https://ntfy.sh/" + topic + "/json?poll=1&since=12h").then(function (r) { return r.text(); }).then(function (t) {
+      return crypto.subtle.importKey("raw", hex2bytes(sha256(key + ":enc")), "AES-GCM", false, ["decrypt"]).then(function (ck) {
+        var lines = t.trim().split("\n").reverse(), n = 0;
+        function next() {
+          if (n >= lines.length) return Promise.reject("aucun signal");
+          var line = lines[n++], o;
+          try { o = JSON.parse(line); } catch (e) { return next(); }
+          if (o.event !== "message") return next();
+          var raw; try { raw = Uint8Array.from(atob(o.message.trim()), function (c) { return c.charCodeAt(0); }); } catch (e) { return next(); }
+          return crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, ck, raw.slice(12)).then(function (pt) {
+            var p = new TextDecoder().decode(pt).split("|");
+            if ((p[1] === "ack" || p[1] === "hb") && /^\d+\.\d+\.\d+\.\d+$/.test(p[6] || "")) return p[6];
+            return next();
+          }, next);
+        }
+        return next();
+      });
+    });
+  }
+  window.__discover = discover;
+
   // ----- Connexion -----
   $("#go").onclick = function () {
     var key = $("#key").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (key.length !== 12) { say("La clé fait 12 caractères.", true); return; }
     var ip = $("#ip").value.trim();
     if (!served) {
-      if (!ip) { say("Entre l'adresse du S22 (visible dans la télécommande : ligne « direct Wi-Fi »).", true); return; }
+      if (!ip) {
+        say("Recherche du S22 avec ta clé…");
+        discover(key).then(function (found) { $("#ip").value = found; $("#go").onclick(); }, function () {
+          say("Adresse du S22 introuvable toute seule (S22 éteint, sans internet, ou page ouverte sans cadenas). Entre-la à la main ou ouvre la page depuis le S22.", true);
+          $("#ipbox").style.display = "block";
+        });
+        return;
+      }
       base = "http://" + ip.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "") + ":8765";
     }
     token = sha256(key + ":web").slice(0, 32);
@@ -264,6 +297,16 @@
   $("#bFull").onclick = function () { var w = $("#wrap"); (w.requestFullscreen || w.webkitRequestFullscreen || function () {}).call(w); };
   $("#qual").onchange = function () { if (cam.on) startCam(cam.front); };
   window.addEventListener("beforeunload", function () { $("#camimg").src = BLANK; });
+
+  // ----- Connexion automatique : clé dans l'adresse (#k=...) ou clé déjà enregistrée -----
+  var hm = /[#&]k=([A-Za-z0-9-]+)/.exec(location.hash);
+  if (hm) {
+    $("#key").value = hm[1];
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+    $("#go").onclick();
+  } else if (served && load("antivol_key")) {
+    $("#go").onclick();
+  }
 })();
 </script>
 </body>
