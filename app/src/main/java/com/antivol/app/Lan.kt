@@ -14,6 +14,9 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
+import java.io.OutputStream
+import java.security.MessageDigest
+import android.os.BatteryManager
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
@@ -74,6 +77,9 @@ object Lan {
     private var frame: String? = null
     private var frameSeq = 0L
 
+    @Volatile var sirenOn = false
+    @Volatile var lastFix = ""
+    @Volatile var camFps = 0
     @Volatile var lastPoll = 0L
     @Volatile var lastFrameFetch = 0L
     @Volatile var serverError = ""
@@ -200,7 +206,7 @@ object Lan {
 
             fun respond(code: Int, text: String) {
                 val b = text.toByteArray()
-                out.write("HTTP/1.1 $code X\r\nContent-Type: text/plain\r\nContent-Length: ${b.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                out.write("HTTP/1.1 $code X\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ${b.size}\r\nConnection: close\r\n\r\n".toByteArray())
                 out.write(b)
                 out.flush()
             }
@@ -254,8 +260,106 @@ object Lan {
                     lastFrameFetch = System.currentTimeMillis()
                     respond(200, "$fs\n${data ?: ""}")
                 }
+                method == "GET" && path == "/p" -> respond(200, "1")
+                method == "GET" && path == "/" -> {
+                    val html = try { ctx.assets.open("control.html").use { it.readBytes() } } catch (_: Exception) { null }
+                    if (html == null) respond(404, "page absente")
+                    else {
+                        out.write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: ${html.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                        out.write(html)
+                        out.flush()
+                    }
+                }
+                path.startsWith("/w/") -> serveWeb(ctx, sock, out, path, query, onCommand)
                 else -> respond(404, "")
             }
+        }
+    }
+
+    // ---------- Page HTML de contrôle (servie par le S22 lui-même) ----------
+
+    private fun webAuth(secret: String, k: String?): Boolean {
+        if (k.isNullOrEmpty()) return false
+        val want = Crypto.topic(secret, "web").removePrefix("antivol-")
+        return MessageDigest.isEqual(want.toByteArray(), k.toByteArray())
+    }
+
+    private fun serveWeb(ctx: Context, sock: Socket, out: OutputStream, path: String, query: String, onCommand: (String) -> Boolean) {
+        val q = HashMap<String, String>()
+        for (kv in query.split("&")) {
+            if (!kv.contains("=")) continue
+            try { q[kv.substringBefore("=")] = java.net.URLDecoder.decode(kv.substringAfter("="), "UTF-8") } catch (_: Exception) {}
+        }
+        fun send(code: Int, type: String, body: String) {
+            val b = body.toByteArray()
+            out.write("HTTP/1.1 $code X\r\nContent-Type: $type\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: ${b.size}\r\nConnection: close\r\n\r\n".toByteArray())
+            out.write(b)
+            out.flush()
+        }
+        val secret = Prefs.secret(ctx)
+        if (!webAuth(secret, q["k"])) { send(403, "text/plain", "refus"); return }
+
+        when (path) {
+            "/w/cmd" -> {
+                val cmd = q["c"] ?: ""
+                val arg = (q["a"] ?: "").take(200)
+                val allowed = setOf(
+                    "lock", "stolen", "alarm", "say", "locate", "live", "photo", "free", "avion",
+                    "screen", "app", "url", "torch", "volume", "ui", "status"
+                )
+                if (cmd !in allowed) { send(400, "text/plain", "ordre inconnu"); return }
+                val enc = Crypto.encrypt(secret, "${System.currentTimeMillis() / 1000}|$cmd|$arg")
+                val ok = try { onCommand(enc) } catch (_: Exception) { false }
+                send(if (ok) 200 else 403, "text/plain", if (ok) "ok" else "refus")
+            }
+            "/w/state" -> {
+                val batt = try {
+                    ctx.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                } catch (_: Exception) { -1 }
+                send(
+                    200, "application/json",
+                    "{\"locked\":${Prefs.isLocked(ctx)},\"stolen\":${Prefs.isStolen(ctx)},\"batt\":$batt," +
+                        "\"siren\":$sirenOn,\"fps\":$camFps,\"cam\":${CamStream.running},\"loc\":\"$lastFix\"}"
+                )
+            }
+            "/w/rot" -> {
+                val (rot, w, h) = CamStream.info(ctx, q["cam"] != "back", q["q"] == "720")
+                send(200, "application/json", "{\"rot\":$rot,\"w\":$w,\"h\":$h}")
+            }
+            "/w/cam" -> {
+                val front = q["cam"] != "back"
+                if (!CamStream.acquire(ctx, front, q["q"] == "720")) {
+                    send(503, "text/plain", "Caméra indisponible : ${CamStream.lastError}")
+                    return
+                }
+                try {
+                    sock.tcpNoDelay = true
+                    out.write(
+                        ("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\n" +
+                            "Cache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").toByteArray()
+                    )
+                    var since = 0L
+                    var idle = 0
+                    val deadline = System.currentTimeMillis() + 15 * 60_000L
+                    while (System.currentTimeMillis() < deadline) {
+                        val f = CamStream.next(since, 2_000)
+                        if (f == null) {
+                            if (!CamStream.running || ++idle > 5) break
+                            continue
+                        }
+                        idle = 0
+                        since = f.first
+                        out.write("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${f.second.size}\r\n\r\n".toByteArray())
+                        out.write(f.second)
+                        out.write("\r\n".toByteArray())
+                        out.flush()
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    CamStream.release()
+                }
+            }
+            else -> send(404, "text/plain", "")
         }
     }
 
@@ -267,6 +371,8 @@ object Lan {
         @Volatile private var running = true
         @Volatile var ip: String = ""
         @Volatile var lastOk = 0L
+        /** Temps aller-retour vers le S22 en millisecondes (-1 = pas de réponse). */
+        @Volatile var rtt = -1L
         @Volatile var status = "recherche du S22 sur ce Wi-Fi…"
         private var multicast: WifiManager.MulticastLock? = null
 
@@ -287,12 +393,37 @@ object Lan {
             } catch (_: Exception) {}
             Thread { listenBeacon() }.apply { isDaemon = true }.start()
             Thread { pollLoop() }.apply { isDaemon = true }.start()
+            Thread { pingLoop() }.apply { isDaemon = true }.start()
             return this
         }
 
         fun stop() {
             running = false
             try { multicast?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
+        }
+
+        /** Mesure toutes les 3 secondes le temps de réponse du S22 (pour l'icône Wi-Fi). */
+        private fun pingLoop() {
+            while (running) {
+                val t = target()
+                if (t.isEmpty()) {
+                    rtt = -1
+                } else {
+                    val a = System.currentTimeMillis()
+                    try {
+                        val c = URL("http://$t:$PORT/p").openConnection() as HttpURLConnection
+                        c.connectTimeout = 2500
+                        c.readTimeout = 2500
+                        val ok = c.responseCode == 200
+                        c.disconnect()
+                        rtt = if (ok) System.currentTimeMillis() - a else -1
+                        if (ok) lastOk = System.currentTimeMillis()
+                    } catch (_: Exception) {
+                        rtt = -1
+                    }
+                }
+                try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
+            }
         }
 
         private fun listenBeacon() {

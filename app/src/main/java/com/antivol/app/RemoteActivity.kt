@@ -42,6 +42,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.Icon
+import android.content.ClipboardManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -68,6 +77,7 @@ class RemoteActivity : ComponentActivity() {
     private var info by mutableStateOf("Aucune réponse du S22 pour l'instant.")
     private var points by mutableStateOf<List<Pair<Double, Double>>>(emptyList())
     private var alarmOn by mutableStateOf(false)
+    @Volatile private var lastMsgAt = 0L
     private var liveOn by mutableStateOf(false)
     private var mapView: TileMapView? = null
     private var keyText by mutableStateOf("")
@@ -415,6 +425,8 @@ class RemoteActivity : ComponentActivity() {
                     ) { Text("Enregistrer la clé") }
                 }
 
+                LinkBadge()
+
                 AppCard {
                     Text("État du S22", color = cDim, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
@@ -664,6 +676,18 @@ class RemoteActivity : ComponentActivity() {
                             shape = RoundedCornerShape(12.dp)
                         ) { Text("Créer ma clé (ouvre le site)") }
                         Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val clip = try {
+                                    getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()?.trim()
+                                } catch (_: Exception) { null }
+                                if (clip.isNullOrEmpty()) toast("Rien de copié : copie d'abord ta clé sur le site")
+                                else { aiKey = clip; toast("Clé collée : appuie sur Enregistrer") }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Coller la clé copiée") }
+                        Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = aiKey,
                             onValueChange = { aiKey = it.trim() },
@@ -825,6 +849,7 @@ class RemoteActivity : ComponentActivity() {
             if (seenBodies.size > 500) seenBodies.removeFirst()
         }
         val plain = Crypto.decrypt(secret, body) ?: return
+        lastMsgAt = System.currentTimeMillis()
         val p = plain.split("|")
         if (p.size < 2) return
         val ts = p[0].toLongOrNull() ?: return
@@ -920,6 +945,54 @@ class RemoteActivity : ComponentActivity() {
         Prefs.setBool(this, "live_on", on)
         Prefs.setLong(this, "live_since", System.currentTimeMillis())
         send("live", if (on) "on" else "off")
+    }
+
+    /** Icône Wi-Fi : comment le S22 et ce téléphone se captent (direct Wi-Fi, internet, ou rien). */
+    @Composable
+    private fun LinkBadge() {
+        var now by remember { mutableStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
+        val l = lan
+        val rtt = l?.rtt ?: -1L
+        val direct = l != null && rtt >= 0 && now - l.lastOk < 12_000
+        val sinceMsg = if (lastMsgAt == 0L) Long.MAX_VALUE else (now - lastMsgAt) / 1000
+        val bars: Int
+        val color: Color
+        val title: String
+        val detail: String
+        when {
+            direct && rtt < 60 -> { bars = 4; color = Color(0xFF2ECC71); title = "Direct Wi-Fi · excellent"; detail = "Réponse du S22 en $rtt ms (${l?.target()})" }
+            direct && rtt < 200 -> { bars = 3; color = Color(0xFF2ECC71); title = "Direct Wi-Fi · bon"; detail = "Réponse du S22 en $rtt ms (${l?.target()})" }
+            direct -> { bars = 2; color = Color(0xFFF1C40F); title = "Direct Wi-Fi · lent"; detail = "Réponse du S22 en $rtt ms : Wi-Fi chargé ou S22 loin du routeur" }
+            sinceMsg < 90 -> { bars = 2; color = Color(0xFFF39C12); title = "Par internet"; detail = "Pas de liaison directe (pas le même Wi-Fi). Dernier signal du S22 il y a $sinceMsg s" }
+            sinceMsg < 600 -> { bars = 1; color = Color(0xFFE67E22); title = "Signal faible"; detail = "Dernier signal du S22 il y a ${sinceMsg / 60} min ${sinceMsg % 60} s" }
+            else -> { bars = 0; color = Color(0xFFE11D2E); title = "Pas de liaison"; detail = if (lastMsgAt == 0L) "Aucun signal reçu du S22 depuis l'ouverture. Vérifie la clé de liaison et qu'il a internet." else "Plus de signal du S22 depuis ${sinceMsg / 60} min : éteint, sans internet ou protection arrêtée ?" }
+        }
+        AppCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (bars == 0) Icons.Filled.WifiOff else Icons.Filled.Wifi,
+                    contentDescription = null, tint = color, modifier = Modifier.size(34.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = color)
+                    Text(detail, color = cDim, fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(8.dp))
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    for (i in 1..4) {
+                        Box(
+                            Modifier
+                                .width(6.dp)
+                                .height((6 + i * 6).dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (i <= bars) color else Color(0x33FFFFFF))
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun formatAge(sec: Long): String = when {

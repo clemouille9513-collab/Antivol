@@ -411,7 +411,10 @@ class GuardService : Service() {
             when (cmd) {
                 "lock" -> triggerLock("Ordre de la télécommande", force = true)
                 "stolen" -> startStolen()
-                "alarm" -> if (arg == "off") stolenMode?.stopSiren() else stolen().start(siren = true, withSpeech = false)
+                "alarm" -> {
+                    if (arg == "off") stolenMode?.stopSiren() else stolen().start(siren = true, withSpeech = false)
+                    Lan.sirenOn = stolenMode?.sirenOn == true
+                }
                 "say" -> stolen().say(arg)
                 "locate" -> sendLocation()
                 "live" -> liveLocation(arg == "on")
@@ -622,6 +625,7 @@ class GuardService : Service() {
         if (Prefs.isLocked(this) || Prefs.isStolen(this)) event("unlocked", "Téléphone libéré")
         // Tu viens de prouver que c'est toi (codes) : pas de blocage par visage ou voix pendant 10 minutes.
         bioPausedUntil = System.currentTimeMillis() + 600_000L
+        Lan.sirenOn = false
         Prefs.setStolen(this, false)
         Prefs.setLocked(this, false)
         handler.removeCallbacks(lockRunnable)
@@ -662,6 +666,7 @@ class GuardService : Service() {
     }
 
     private fun replyLocation(l: Location) {
+        Lan.lastFix = "${l.latitude},${l.longitude},${l.accuracy.toInt()},${System.currentTimeMillis() / 1000}"
         if (smsPending) { smsPending = false; alertSms(l) }
         reply("loc|${l.latitude}|${l.longitude}|${l.accuracy.toInt()}")
     }
@@ -730,7 +735,7 @@ class GuardService : Service() {
     // ---------- Regards indiscrets ----------
 
     private fun scanForPeekers() {
-        if (!Prefs.isPeekEnabled(this) || peekBusy || camBusy) return
+        if (!Prefs.isPeekEnabled(this) || peekBusy || camBusy || CamStream.running) return
         if (Prefs.isLocked(this) || Prefs.isStolen(this)) return
         if (!Settings.canDrawOverlays(this)) return
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return

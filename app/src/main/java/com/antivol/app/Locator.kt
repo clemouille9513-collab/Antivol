@@ -31,6 +31,51 @@ object Locator {
     private fun fresh(l: Location) = System.currentTimeMillis() - l.time < MAX_AGE_MS
 
     /**
+     * Filtre de Kalman : un téléphone immobile ne fait plus « sauter » le point.
+     * Chaque mesure est pondérée par sa précision ; un mouvement réel (vitesse) rend le filtre plus réactif.
+     */
+    private class Smoother {
+        private var lat = 0.0
+        private var lon = 0.0
+        private var variance = -1.0
+        private var t = 0L
+
+        fun reset() { variance = -1.0 }
+
+        fun add(l: Location): Location {
+            val now = System.currentTimeMillis()
+            val acc = l.accuracy.coerceIn(3f, 500f).toDouble()
+            var jump = false
+            if (variance >= 0) {
+                val d = FloatArray(1)
+                Location.distanceBetween(lat, lon, l.latitude, l.longitude, d)
+                jump = d[0] > 60 + acc * 3
+            }
+            if (variance < 0 || now - t > 90_000 || jump) {
+                lat = l.latitude; lon = l.longitude; variance = acc * acc
+            } else {
+                val dt = ((now - t) / 1000.0).coerceIn(0.0, 30.0)
+                val speed = if (l.hasSpeed()) l.speed.toDouble() else 1.0
+                val q = maxOf(speed, 0.5)
+                variance += dt * q * q
+                val k = variance / (variance + acc * acc)
+                lat += k * (l.latitude - lat)
+                lon += k * (l.longitude - lon)
+                variance *= (1 - k)
+            }
+            t = now
+            return Location(l).apply {
+                latitude = lat
+                longitude = lon
+                accuracy = maxOf(Math.sqrt(variance).toFloat(), 6f)
+                time = now
+            }
+        }
+    }
+
+    private val smoother = Smoother()
+
+    /**
      * Cherche la meilleure position pendant 25 secondes au maximum.
      * [onFix] est appelé dès qu'une mesure correcte arrive, puis encore si une bien plus précise suit.
      */
@@ -42,14 +87,14 @@ object Locator {
         var sent: Location? = null
         var finished = false
 
-        fun consider(l: Location, stop: () -> Unit) {
-            if (!fresh(l)) return
-            if (best == null || l.accuracy < best!!.accuracy) best = l
-            val b = best!!
+        fun consider(raw: Location, stop: () -> Unit) {
+            if (!fresh(raw)) return
+            val l = smoother.add(raw)
+            best = l
             val s = sent
-            if (s == null && b.accuracy <= 30f) { sent = b; onFix(b) }
-            else if (s != null && b.accuracy < s.accuracy * 0.6f) { sent = b; onFix(b) }
-            if (b.accuracy <= 12f && !finished) { finished = true; stop() }
+            if (s == null && l.accuracy <= 30f) { sent = l; onFix(l) }
+            else if (s != null && l.accuracy < s.accuracy * 0.7f) { sent = l; onFix(l) }
+            if (l.accuracy <= 10f && !finished) { finished = true; stop() }
         }
 
         try {
@@ -107,7 +152,7 @@ object Locator {
             val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).setMinUpdateIntervalMillis(1000L).build()
             val cb = object : LocationCallback() {
                 override fun onLocationResult(r: LocationResult) {
-                    r.lastLocation?.let { if (fresh(it)) onFix(it) }
+                    r.lastLocation?.let { if (fresh(it)) onFix(smoother.add(it)) }
                 }
             }
             liveCb = cb
