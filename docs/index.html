@@ -434,13 +434,20 @@
   }
 
   var es = null;
+  var esFails = 0, esT = null;
   async function connect() {
     if (es) { es.close(); es = null; }
     if (!secret) { setNet(false, "Clé manquante"); return; }
     var t = await topic("rep");
     es = new EventSource("https://ntfy.sh/" + t + "/sse?since=12h");
-    es.addEventListener("open", function () { setNet(true, "En ligne"); startPing(); });
-    es.addEventListener("error", function () { setNet(false, "Reconnexion…"); });
+    es.addEventListener("open", function () { esFails = 0; setNet(true, "En ligne"); startPing(); });
+    es.addEventListener("error", function () {
+      // Trop de reconnexions = erreur 429 du service : on ralentit au lieu d'insister.
+      try { es.close(); } catch (e) {} es = null;
+      if (!ctlOk()) setNet(false, "Reconnexion…");
+      clearTimeout(esT); esT = setTimeout(connect, Math.min(120000, 8000 * (++esFails)));
+    });
+    ctlStart();
     es.addEventListener("message", function (e) {
       try { var o = JSON.parse(e.data); if (o.message) handle(o.message); } catch (x) {}
     });
@@ -451,15 +458,17 @@
     var l = positions[positions.length - 1];
     if (!l || Date.now() / 1000 - l.ts > 300) sendQuiet("locate", "").catch(function () {});
   }
-  function startPing() { clearInterval(pingT); setTimeout(pingPhone, 1500); }
+  function startPing() { if (startPing.done) return; startPing.done = true; clearInterval(pingT); setTimeout(pingPhone, 1500); }
   function setNet(ok, text) { $("#netdot").className = "dot " + (ok ? "ok" : "bad"); $("#nettext").textContent = text; }
 
   // ---------- Envoi des ordres ----------
   async function send(cmd, arg) {
     if (!secret) { openKey(); return; }
     var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + (arg || "");
+    var body0 = await encryptText(plain);
+    if (ctlPublish(body0)) { toast("Ordre « " + cmd + " » envoyé au téléphone"); return; }
     try {
-      var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: await encryptText(plain) });
+      var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: body0 });
       toast(r.ok ? "Ordre « " + cmd + " » envoyé au téléphone" : "Envoi refusé (" + r.status + ")");
     } catch (e) { toast("Envoi impossible : pas de connexion"); }
   }
@@ -569,7 +578,9 @@
   }
   async function sendQuiet(cmd, arg) {
     var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + arg;
-    var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: await encryptText(plain) });
+    var body1 = await encryptText(plain);
+    if (ctlPublish(body1)) return;
+    var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: body1 });
     if (!r.ok) throw new Error("ntfy " + r.status);
   }
   function rtcStop(tell) {
@@ -653,6 +664,25 @@
     toast(v.trim() ? "Relais enregistré" : "Relais effacé");
   };
 
+
+  // ---------- Canal de contrôle par serveur relais (sans la limite par jour de ntfy) ----------
+  var ctlClients = [], ctlBase = "";
+  function ctlOk() { return ctlClients.some(function (c) { return c.connected; }); }
+  function ctlPublish(text) { var n = 0; ctlClients.forEach(function (c) { if (c.connected) { try { c.publish(ctlBase + "/c", text); n++; } catch (e) {} } }); return n; }
+  async function ctlStart() {
+    if (typeof mqtt === "undefined" || !secret) return;
+    var nb = "antivol/" + await topic("m");
+    if (ctlClients.length && nb === ctlBase) return;
+    ctlClients.forEach(function (c) { try { c.end(true); } catch (e) {} }); ctlClients = [];
+    ctlBase = nb;
+    BROKERS.slice(0, 2).forEach(function (url) {
+      var c = mqtt.connect(url, { reconnectPeriod: 4000, connectTimeout: 8000, clean: true, keepalive: 20 });
+      c.on("connect", function () { c.subscribe(ctlBase + "/r"); setNet(true, "En ligne (relais)"); startPing(); });
+      c.on("error", function () {});
+      c.on("message", function (t, pl) { if (t === ctlBase + "/r") handle(dec.decode(pl)); });
+      ctlClients.push(c);
+    });
+  }
   // ---------- Direct garanti par un serveur relais public (MQTT) ----------
   var mq = null, mqBase = "", mqKeepT = null, mqKey = null, actx = null, nextAudio = 0, frames = 0, fpsT = null, lastUrl = "", firstFrame = false;
   var BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt", "wss://test.mosquitto.org:8081", "wss://mqtt.eclipseprojects.io/mqtt"];

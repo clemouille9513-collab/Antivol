@@ -13,6 +13,11 @@ object Report {
         val secret = Prefs.secret(c)
         val enc = Crypto.encrypt(secret, "${System.currentTimeMillis() / 1000}|$text")
         Lan.push(enc)
+        // Canal relais (sans limite par jour) : réponses bavardes uniquement par là quand il marche, pour ne pas dépasser le quota de ntfy.
+        val viaLink = Link.send("r", enc.toByteArray())
+        val noisy = text.startsWith("ack|") || text.startsWith("photo|") ||
+            Regex("^evt\\|(rtc|photo|act|cfg|screen)\\|").containsMatchIn(text)
+        if (viaLink && noisy) return
         val heavy = text.startsWith("loc|") || text.startsWith("ack|") || text.startsWith("hb|") || text.startsWith("photo|")
         if (!(heavy && Lan.active())) Ntfy.publish(Crypto.topic(secret, "rep"), enc)
     }

@@ -309,6 +309,7 @@ class GuardService : Service() {
         Ntfy.watchNetwork(this)
         // Liaison directe sur le Wi-Fi : la télécommande parle au S22 sans passer par internet.
         Lan.startServer(this) { body -> handleCommand(Prefs.secret(this), body) }
+        Link.start(this) { body -> handleCommand(Prefs.secret(this), body) }
         handler.removeCallbacks(watchdog)
         handler.postDelayed(watchdog, 3_000)
         startMotionGuard()
@@ -402,6 +403,7 @@ class GuardService : Service() {
         sensorMgr = null
         screenOn = false
         try { Rtc.stop() } catch (_: Throwable) {}
+        try { Link.stop() } catch (_: Throwable) {}
         try { Relay.stop() } catch (_: Throwable) {}
         Locator.stopLive(this)
         Lan.stopServer()
@@ -762,10 +764,11 @@ class GuardService : Service() {
 
     /** Réduit une photo pour qu'elle tienne en peu de messages (ntfy limite chaque message à 4 Ko et le nombre par minute). */
     private fun shrink(bytes: ByteArray): ByteArray {
-        if (bytes.size <= 22_000) return bytes
+        val limit = if (Link.ready) 140_000 else 22_000
+        if (bytes.size <= limit) return bytes
         return try {
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return bytes
-            val w = minOf(480, bmp.width)
+            val w = minOf(if (Link.ready) 960 else 480, bmp.width)
             val h = (bmp.height * (w.toFloat() / bmp.width)).toInt()
             val sc = if (w == bmp.width) bmp else android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
             var q = 50
@@ -775,7 +778,7 @@ class GuardService : Service() {
                 sc.compress(android.graphics.Bitmap.CompressFormat.JPEG, q, bo)
                 out = bo.toByteArray()
                 q -= 10
-            } while (out.size > 22_000 && q >= 20)
+            } while (out.size > limit && q >= 20)
             out
         } catch (_: Throwable) { bytes }
     }
@@ -783,7 +786,8 @@ class GuardService : Service() {
     private fun sendImage(raw: ByteArray, facing: String, why: String) {
         val bytes = shrink(raw)
         val secret = Prefs.secret(this)
-        val chunks = Crypto.encryptBytes(secret, bytes).chunked(2600)
+        val full = Crypto.encryptBytes(secret, bytes)
+        val chunks = if (Link.ready) listOf(full) else full.chunked(2600)
         val id = System.currentTimeMillis() / 1000
         val label = when (facing) { "front" -> "Photo avant"; "back" -> "Photo arrière"; else -> "Capture d'écran" }
         event("photo", "$label envoyée ($why)")
