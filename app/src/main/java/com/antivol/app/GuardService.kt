@@ -762,20 +762,20 @@ class GuardService : Service() {
 
     /** Réduit une photo pour qu'elle tienne en peu de messages (ntfy limite chaque message à 4 Ko et le nombre par minute). */
     private fun shrink(bytes: ByteArray): ByteArray {
-        if (bytes.size <= 45_000) return bytes
+        if (bytes.size <= 22_000) return bytes
         return try {
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return bytes
-            val w = minOf(640, bmp.width)
+            val w = minOf(480, bmp.width)
             val h = (bmp.height * (w.toFloat() / bmp.width)).toInt()
             val sc = if (w == bmp.width) bmp else android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
-            var q = 55
+            var q = 50
             var out: ByteArray
             do {
                 val bo = java.io.ByteArrayOutputStream()
                 sc.compress(android.graphics.Bitmap.CompressFormat.JPEG, q, bo)
                 out = bo.toByteArray()
                 q -= 10
-            } while (out.size > 45_000 && q >= 25)
+            } while (out.size > 22_000 && q >= 20)
             out
         } catch (_: Throwable) { bytes }
     }

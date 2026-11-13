@@ -415,6 +415,7 @@
       if (photos.some(function (x) { return x.id === id; }) || delIds().indexOf(id) >= 0) return;
       var a = assembling[id] || (assembling[id] = { n: n, facing: facing, parts: {} });
       a.parts[idx] = chunk;
+      if (Object.keys(a.parts).length < a.n) toast("Photo en cours de réception : " + Object.keys(a.parts).length + "/" + a.n);
       if (Object.keys(a.parts).length === a.n) {
         var all = ""; for (var i = 0; i < a.n; i++) all += a.parts[i];
         try {
@@ -450,7 +451,7 @@
     var l = positions[positions.length - 1];
     if (!l || Date.now() / 1000 - l.ts > 300) sendQuiet("locate", "").catch(function () {});
   }
-  function startPing() { clearInterval(pingT); setTimeout(pingPhone, 1500); pingT = setInterval(function () { if (!document.hidden) pingPhone(); }, 120000); }
+  function startPing() { clearInterval(pingT); setTimeout(pingPhone, 1500); }
   function setNet(ok, text) { $("#netdot").className = "dot " + (ok ? "ok" : "bad"); $("#nettext").textContent = text; }
 
   // ---------- Envoi des ordres ----------
