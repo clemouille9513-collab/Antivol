@@ -289,6 +289,13 @@
     battery: "var(--yellow)", shutdown: "var(--yellow)", bluetooth: "var(--blue)", photo: "var(--purple)", unlocked: "var(--green)", service: "var(--dim)" };
 
   // ---------- Carte ----------
+  // Si la bibliothèque de carte n'a pas pu se charger (pas d'internet, site bloqué), le reste de la page doit marcher quand même.
+  if (typeof L === "undefined") {
+    var noopL = function () { return proxyL; };
+    var proxyL = new Proxy(noopL, { get: function () { return proxyL; }, apply: function () { return proxyL; } });
+    window.L = proxyL;
+    try { document.getElementById("map").textContent = "Carte indisponible (bibliothèque non chargée). Le reste fonctionne."; } catch (e) {}
+  }
   var map = L.map("map", { zoomControl: true }).setView([46.6, 2.4], 5);
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     maxZoom: 19, attribution: "&copy; OpenStreetMap &copy; CARTO"
