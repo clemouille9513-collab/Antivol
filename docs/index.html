@@ -113,6 +113,10 @@
 </header>
 
 <main>
+  <div class="card" style="grid-column:1/-1;border-color:#d6001c">
+    <h2>🚨 Suspects (photos prises quand quelqu'un utilise ou regarde le téléphone)</h2>
+    <div id="suspects"></div>
+  </div>
   <div class="col">
     <div id="mapwrap">
       <div id="map"></div>
@@ -340,7 +344,23 @@
   }
   function delIds() { return load("antivol_photo_del", []); }
   function markDeleted(id) { var d = delIds(); if (d.indexOf(id) < 0) { d.push(id); save("antivol_photo_del", d.slice(-300)); } }
+  function renderSuspects() {
+    var el = $("#suspects"); if (!el) return;
+    var list = photos.filter(function (q) { return q.suspect; }).slice().reverse();
+    if (!list.length) { el.innerHTML = '<div class="empty">Aucun suspect pour l\'instant. Dès qu\'il y en a un, sa photo apparaît ici et la page ouvre une alerte rouge.</div>'; return; }
+    el.innerHTML = "";
+    var row = document.createElement("div"); row.style.cssText = "display:flex;gap:10px;overflow-x:auto";
+    list.forEach(function (q) {
+      var d = document.createElement("div"); d.style.cssText = "flex:0 0 auto;text-align:center";
+      var im = document.createElement("img"); im.src = q.data; im.style.cssText = "height:180px;border-radius:10px;border:2px solid #d6001c;cursor:pointer";
+      im.onclick = function () { $("#big img").src = q.data; $("#big").style.display = "flex"; };
+      var c = document.createElement("div"); c.style.cssText = "font-size:12px;color:var(--dim);margin-top:4px"; c.textContent = fmtTime(q.ts);
+      d.appendChild(im); d.appendChild(c); row.appendChild(d);
+    });
+    el.appendChild(row);
+  }
   function renderPhotos() {
+    renderSuspects();
     var el = $("#photos");
     if (!photos.length) { el.innerHTML = '<div class="empty">Aucune photo reçue.</div>'; return; }
     el.innerHTML = "";
@@ -430,7 +450,7 @@
           var bytes = await decryptBytes(all);
           var blob = new Blob([bytes], { type: "image/jpeg" });
           var data = await new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.readAsDataURL(blob); });
-          var sus = alertAt && Date.now() - alertAt < 120000;
+          var sus = alertAt && Date.now() - alertAt < 900000;
           photos.push({ id: id, ts: parseInt(id, 10), facing: facing, data: data, suspect: !!sus });
           if (sus) { $("#big img").src = data; $("#big").style.display = "flex"; }
           photos = photos.slice(-12); save("antivol_photos", photos); renderPhotos();
