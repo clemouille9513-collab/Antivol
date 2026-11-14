@@ -112,6 +112,7 @@
   <button class="btn-ghost" id="keybtn">Clé</button>
 </header>
 
+<div id="linkInfo" style="padding:8px 20px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line)">Liaison…</div>
 <main>
   <div class="card" style="grid-column:1/-1;border-color:#d6001c">
     <h2>🚨 Suspects (photos prises quand quelqu'un utilise ou regarde le téléphone)</h2>
@@ -516,6 +517,7 @@
     if (!ts || p.length < 2) return;
     var type = p[1], changed = false;
     touch(ts); // n'importe quel message du téléphone prouve qu'il est en vie
+    lastReply = Date.now();
     if (waitingSince && ts * 1000 >= waitingSince - 5000) { waitingSince = 0; clearTimeout(waitT); toast("Le téléphone a répondu"); }
     if (type === "rtc") { rtcReply(p); return; }
     if (type === "evt" && /^(peek|face|wrong)$/.test(p[2]) && Date.now() / 1000 - ts < 180) {
@@ -621,13 +623,14 @@
   // ---------- Envoi des ordres ----------
   // Un ordre part toujours par les DEUX voies (serveur relais et ntfy) : si l'une est bloquée ou que le téléphone n'écoute pas dessus, l'autre passe.
   // Le téléphone ignore le doublon.
-  var waitingSince = 0, waitT = null;
+  var waitingSince = 0, waitT = null, lastNtfy = "ntfy : pas encore utilisé", lastReply = 0;
   async function post(body) {
     var viaRelay = ctlPublish(body), viaNtfy = false, code = 0;
     try {
       var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: body });
       viaNtfy = r.ok; code = r.status;
     } catch (e) {}
+    lastNtfy = viaNtfy ? "ntfy : ordre accepté" : "ntfy : refusé" + (code ? " (erreur " + code + (code === 429 ? " = trop de messages aujourd'hui" : "") + ")" : " (pas de connexion)");
     return { relay: viaRelay > 0, ntfy: viaNtfy, code: code };
   }
   function expectReply(label) {
@@ -984,6 +987,12 @@
   $("#rtcHd").onclick = function () { relayStop(true); $("#relayCanvas").style.display = "none"; $("#rtcVideo").style.display = "block"; rtcStart("screen"); };
   $("#rtcStop").onclick = function () { rtcStop(true); relayStop(true); $("#rtcBox").style.display = "none"; };
   $("#rtcSound").onclick = function () { try { if (actx) actx.resume(); } catch (e) {} var v = $("#rtcVideo"); v.muted = false; v.volume = 1; v.play(); };
+
+  setInterval(function () {
+    var n = ctlClients.filter(function (c) { return c.connected; }).length;
+    var rep = lastReply ? "dernière réponse du téléphone il y a " + Math.round((Date.now() - lastReply) / 1000) + " s" : "aucune réponse du téléphone depuis l'ouverture de la page";
+    $("#linkInfo").textContent = "Relais : " + (n ? n + " serveur(s) connecté(s)" : "NON connecté") + " · " + lastNtfy + " · " + rep;
+  }, 2000);
 
   // ---------- Reprise après une longue absence (onglet resté ouvert, téléphone endormi) ----------
   function revive() {
