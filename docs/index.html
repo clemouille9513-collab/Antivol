@@ -254,20 +254,140 @@
   var status = load("antivol_status", { locked: null, stolen: null, batt: null, seen: 0 });
 
   // ---------- Chiffrement (identique à l'appli Android) ----------
-  async function sha(s) { return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(s))); }
+  // ---------- Chiffrement de secours (navigateurs sans WebCrypto : page ouverte hors https/file) ----------
+  var Soft = (function () {
+    var K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+    function sha256(msg) {
+      var l = msg.length, n = ((l + 9 + 63) >> 6) << 6, b = new Uint8Array(n); b.set(msg); b[l] = 0x80;
+      var dv = new DataView(b.buffer); dv.setUint32(n - 4, (l * 8) >>> 0); dv.setUint32(n - 8, Math.floor(l / 0x20000000));
+      var H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]), w = new Uint32Array(64);
+      function rr(x, c) { return (x >>> c) | (x << (32 - c)); }
+      for (var o = 0; o < n; o += 64) {
+        for (var i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+        for (i = 16; i < 64; i++) { var s0 = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3), s1 = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10); w[i] = (w[i-16] + s0 + w[i-7] + s1) | 0; }
+        var a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+        for (i = 0; i < 64; i++) {
+          var S1 = rr(e,6) ^ rr(e,11) ^ rr(e,25), ch = (e & f) ^ (~e & g), t1 = (h + S1 + ch + K[i] + w[i]) | 0;
+          var S0 = rr(a,2) ^ rr(a,13) ^ rr(a,22), mj = (a & bb) ^ (a & c) ^ (bb & c), t2 = (S0 + mj) | 0;
+          h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0;
+        }
+        H[0] += a; H[1] += bb; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+      }
+      var out = new Uint8Array(32), ov = new DataView(out.buffer); for (i = 0; i < 8; i++) ov.setUint32(i * 4, H[i]); return out;
+    }
+    var SB = new Uint8Array(256);
+    (function () {
+      var p = 1, q = 1;
+      function rotl(x, s) { return ((x << s) | (x >> (8 - s))) & 0xFF; }
+      do {
+        p = p ^ ((p << 1) & 0xFF) ^ ((p & 0x80) ? 0x1B : 0);
+        q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xFF; if (q & 0x80) q ^= 0x09;
+        SB[p] = (q ^ rotl(q, 1) ^ rotl(q, 2) ^ rotl(q, 3) ^ rotl(q, 4) ^ 0x63) & 0xFF;
+      } while (p !== 1);
+      SB[0] = 0x63;
+    })();
+    function xt(x) { return ((x << 1) ^ ((x & 0x80) ? 0x1b : 0)) & 0xFF; }
+    function expand(key) {
+      var Nk = key.length / 4, Nr = Nk + 6, w = new Uint8Array(16 * (Nr + 1)), rcon = 1; w.set(key);
+      for (var i = Nk; i < 4 * (Nr + 1); i++) {
+        var t0 = w[(i-1)*4], t1 = w[(i-1)*4+1], t2 = w[(i-1)*4+2], t3 = w[(i-1)*4+3];
+        if (i % Nk === 0) { var tt = t0; t0 = SB[t1] ^ rcon; t1 = SB[t2]; t2 = SB[t3]; t3 = SB[tt]; rcon = xt(rcon); }
+        else if (Nk > 6 && i % Nk === 4) { t0 = SB[t0]; t1 = SB[t1]; t2 = SB[t2]; t3 = SB[t3]; }
+        w[i*4] = w[(i-Nk)*4] ^ t0; w[i*4+1] = w[(i-Nk)*4+1] ^ t1; w[i*4+2] = w[(i-Nk)*4+2] ^ t2; w[i*4+3] = w[(i-Nk)*4+3] ^ t3;
+      }
+      return { w: w, Nr: Nr };
+    }
+    function encBlock(k, inp, out) {
+      var s = new Uint8Array(16), t = new Uint8Array(16), w = k.w, r, i, c;
+      for (i = 0; i < 16; i++) s[i] = inp[i] ^ w[i];
+      for (r = 1; r <= k.Nr; r++) {
+        for (c = 0; c < 4; c++) for (i = 0; i < 4; i++) t[c*4+i] = SB[s[((c+i)%4)*4+i]];
+        if (r < k.Nr) {
+          for (c = 0; c < 4; c++) {
+            var a0 = t[c*4], a1 = t[c*4+1], a2 = t[c*4+2], a3 = t[c*4+3];
+            s[c*4]   = xt(a0) ^ xt(a1) ^ a1 ^ a2 ^ a3;
+            s[c*4+1] = a0 ^ xt(a1) ^ xt(a2) ^ a2 ^ a3;
+            s[c*4+2] = a0 ^ a1 ^ xt(a2) ^ xt(a3) ^ a3;
+            s[c*4+3] = xt(a0) ^ a0 ^ a1 ^ a2 ^ xt(a3);
+          }
+        } else s.set(t);
+        for (i = 0; i < 16; i++) s[i] ^= w[r*16+i];
+      }
+      out.set(s);
+    }
+    function mulH(x, h) { // multiplication dans GF(2^128), x et h : 4 mots 32 bits (grand-boutiste)
+      var z0 = 0, z1 = 0, z2 = 0, z3 = 0, v0 = h[0], v1 = h[1], v2 = h[2], v3 = h[3];
+      for (var i = 0; i < 128; i++) {
+        if ((x[i >> 5] >>> (31 - (i & 31))) & 1) { z0 ^= v0; z1 ^= v1; z2 ^= v2; z3 ^= v3; }
+        var lsb = v3 & 1;
+        v3 = (v3 >>> 1) | (v2 << 31); v2 = (v2 >>> 1) | (v1 << 31); v1 = (v1 >>> 1) | (v0 << 31); v0 = v0 >>> 1;
+        if (lsb) v0 ^= 0xe1000000;
+      }
+      x[0] = z0; x[1] = z1; x[2] = z2; x[3] = z3;
+    }
+    function ghash(h, ct) {
+      var y = new Uint32Array(4), blk = new Uint8Array(16), dv = new DataView(blk.buffer), i, j;
+      for (i = 0; i < ct.length; i += 16) {
+        blk.fill(0); blk.set(ct.subarray(i, Math.min(i + 16, ct.length)));
+        for (j = 0; j < 4; j++) y[j] ^= dv.getUint32(j * 4);
+        mulH(y, h);
+      }
+      blk.fill(0); dv.setUint32(12, (ct.length * 8) >>> 0); dv.setUint32(8, Math.floor(ct.length / 0x20000000));
+      for (j = 0; j < 4; j++) y[j] ^= dv.getUint32(j * 4);
+      mulH(y, h);
+      var out = new Uint8Array(16), ov = new DataView(out.buffer); for (j = 0; j < 4; j++) ov.setUint32(j * 4, y[j]); return out;
+    }
+    function ctr(k, iv, data) {
+      var cb = new Uint8Array(16), ks = new Uint8Array(16), out = new Uint8Array(data.length), n = 2, i, j;
+      cb.set(iv);
+      for (i = 0; i < data.length; i += 16) {
+        cb[12] = n >>> 24; cb[13] = (n >>> 16) & 255; cb[14] = (n >>> 8) & 255; cb[15] = n & 255; n++;
+        encBlock(k, cb, ks);
+        for (j = 0; j < 16 && i + j < data.length; j++) out[i + j] = data[i + j] ^ ks[j];
+      }
+      return out;
+    }
+    function setup(key, iv) {
+      var k = expand(key), z = new Uint8Array(16), hb = new Uint8Array(16); encBlock(k, z, hb);
+      var hv = new DataView(hb.buffer), h = new Uint32Array([hv.getUint32(0), hv.getUint32(4), hv.getUint32(8), hv.getUint32(12)]);
+      var j0 = new Uint8Array(16); j0.set(iv); j0[15] = 1; var tm = new Uint8Array(16); encBlock(k, j0, tm);
+      return { k: k, h: h, tm: tm };
+    }
+    function tagOf(s, ct) { var g = ghash(s.h, ct); for (var i = 0; i < 16; i++) g[i] ^= s.tm[i]; return g; }
+    function encrypt(key, iv, pt) {
+      var s = setup(key, iv), ct = ctr(s.k, iv, pt), tag = tagOf(s, ct), out = new Uint8Array(ct.length + 16);
+      out.set(ct); out.set(tag, ct.length); return out;
+    }
+    function decrypt(key, iv, ctTag) {
+      var s = setup(key, iv), ct = ctTag.subarray(0, ctTag.length - 16), tag = tagOf(s, ct), bad = 0;
+      for (var i = 0; i < 16; i++) bad |= tag[i] ^ ctTag[ctTag.length - 16 + i];
+      if (bad) throw new Error("message falsifié");
+      return ctr(s.k, iv, ct);
+    }
+    return { sha256: sha256, encrypt: encrypt, decrypt: decrypt };
+  })();
+  var HAS_SUBTLE = !!(window.crypto && window.crypto.subtle);
+  async function sha(s) { return HAS_SUBTLE ? new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(s))) : Soft.sha256(enc.encode(s)); }
   function hex(u) { return Array.prototype.map.call(u, function (b) { return b.toString(16).padStart(2, "0"); }).join(""); }
   async function topic(kind) { return "antivol-" + hex(await sha(secret + ":" + kind)).slice(0, 32); }
-  async function aesKey() { return crypto.subtle.importKey("raw", await sha(secret + ":enc"), "AES-GCM", false, ["encrypt", "decrypt"]); }
+  async function aesKey() { var kb = await sha(secret + ":enc"); return HAS_SUBTLE ? crypto.subtle.importKey("raw", kb, "AES-GCM", false, ["encrypt", "decrypt"]) : { soft: kb }; }
+  async function aesDec(key, raw) {
+    var iv = raw.slice(0, 12), ct = raw.slice(12);
+    return key.soft ? Soft.decrypt(key.soft, iv, ct) : new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, ct));
+  }
+  async function aesEnc(key, iv, pt) {
+    return key.soft ? Soft.encrypt(key.soft, iv, pt) : new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, pt));
+  }
   function b64ToU8(b) { var s = atob(b.trim()), u = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
   function u8ToB64(u) { var s = ""; for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); }
   async function decryptBytes(b64) {
     var raw = b64ToU8(b64);
-    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, await aesKey(), raw.slice(12)));
+    return aesDec(await aesKey(), raw);
   }
   async function decryptText(b64) { try { return dec.decode(await decryptBytes(b64)); } catch (e) { return null; } }
   async function encryptText(t) {
     var iv = crypto.getRandomValues(new Uint8Array(12));
-    var ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, await aesKey(), enc.encode(t)));
+    var ct = await aesEnc(await aesKey(), iv, enc.encode(t));
     var out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
     return u8ToB64(out);
   }
@@ -796,7 +916,7 @@
   }
   async function decRaw(u) {
     if (!mqKey) mqKey = await aesKey();
-    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: u.slice(0, 12) }, mqKey, u.slice(12)));
+    return aesDec(mqKey, u);
   }
   var relayTry = 0, relaySrc = "";
   async function relayStart(src, from) {
