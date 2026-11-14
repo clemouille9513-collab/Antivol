@@ -368,6 +368,7 @@
     if (!ts || p.length < 2) return;
     var type = p[1], changed = false;
     touch(ts); // n'importe quel message du téléphone prouve qu'il est en vie
+    if (waitingSince && ts * 1000 >= waitingSince - 5000) { waitingSince = 0; clearTimeout(waitT); toast("Le téléphone a répondu"); }
     if (type === "rtc") { rtcReply(p); return; }
     if (type === "evt" && p[2] === "rtc") {
       var m = p.slice(3).join("|"); if (mq) rtcSay(m);
@@ -462,15 +463,35 @@
   function setNet(ok, text) { $("#netdot").className = "dot " + (ok ? "ok" : "bad"); $("#nettext").textContent = text; }
 
   // ---------- Envoi des ordres ----------
+  // Un ordre part toujours par les DEUX voies (serveur relais et ntfy) : si l'une est bloquée ou que le téléphone n'écoute pas dessus, l'autre passe.
+  // Le téléphone ignore le doublon.
+  var waitingSince = 0, waitT = null;
+  async function post(body) {
+    var viaRelay = ctlPublish(body), viaNtfy = false, code = 0;
+    try {
+      var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: body });
+      viaNtfy = r.ok; code = r.status;
+    } catch (e) {}
+    return { relay: viaRelay > 0, ntfy: viaNtfy, code: code };
+  }
+  function expectReply(label) {
+    waitingSince = Date.now(); clearTimeout(waitT);
+    waitT = setTimeout(function () {
+      if (waitingSince) { waitingSince = 0; toast("Le téléphone n'a pas répondu à « " + label + " » : sans internet, protection non activée, ou ancienne APK."); }
+    }, 15000);
+  }
   async function send(cmd, arg) {
     if (!secret) { openKey(); return; }
     var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + (arg || "");
-    var body0 = await encryptText(plain);
-    if (ctlPublish(body0)) { toast("Ordre « " + cmd + " » envoyé au téléphone"); return; }
-    try {
-      var r = await fetch("https://ntfy.sh/" + await topic("cmd"), { method: "POST", body: body0 });
-      toast(r.ok ? "Ordre « " + cmd + " » envoyé au téléphone" : "Envoi refusé (" + r.status + ")");
-    } catch (e) { toast("Envoi impossible : pas de connexion"); }
+    var res = await post(await encryptText(plain));
+    if (!res.relay && !res.ntfy) { toast("Envoi impossible" + (res.code ? " (erreur " + res.code + ")" : " : pas de connexion internet")); return; }
+    toast("Ordre « " + cmd + " » envoyé, attente de la réponse du téléphone…");
+    expectReply(cmd);
+  }
+  async function sendQuiet(cmd, arg) {
+    var plain = Math.floor(Date.now() / 1000) + "|" + cmd + "|" + arg;
+    var res = await post(await encryptText(plain));
+    if (!res.relay && !res.ntfy) throw new Error("envoi impossible");
   }
   function renderAlarm() {
     var b = document.querySelector('[data-cmd="alarm"]');
