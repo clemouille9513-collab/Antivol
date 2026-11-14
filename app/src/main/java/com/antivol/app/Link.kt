@@ -88,7 +88,8 @@ object Link {
 
     private fun connect(mine: Int) {
         if (!running || mine != session) return
-        val url = Relay.BROKERS[idx % Relay.BROKERS.size]
+        // La page n'écoute que les serveurs 0 et 1 : le téléphone ne doit jamais aller ailleurs.
+        val url = Relay.BROKERS[idx % 2]
         ws = client.newWebSocket(
             Request.Builder().url(url).header("Sec-WebSocket-Protocol", "mqtt").build(),
             object : WebSocketListener() {

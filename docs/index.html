@@ -808,6 +808,17 @@
   $("#rtcStop").onclick = function () { rtcStop(true); relayStop(true); $("#rtcBox").style.display = "none"; };
   $("#rtcSound").onclick = function () { try { if (actx) actx.resume(); } catch (e) {} var v = $("#rtcVideo"); v.muted = false; v.volume = 1; v.play(); };
 
+  // ---------- Reprise après une longue absence (onglet resté ouvert, téléphone endormi) ----------
+  function revive() {
+    if (!secret) return;
+    if (!ctlOk()) { ctlClients.forEach(function (c) { try { c.end(true); } catch (e) {} }); ctlClients = []; ctlStart(); }
+    if (!es) { clearTimeout(esT); connect(); }
+    startPing.done = false; startPing();
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) revive(); });
+  window.addEventListener("online", revive);
+  window.addEventListener("error", function (e) { try { toast("Erreur de la page : " + (e.message || "inconnue") + " — recharge-la"); } catch (x) {} });
+
   // ---------- Démarrage ----------
   drawMap(true); renderLog(); renderPhotos(); renderStatus();
   setInterval(renderStatus, 30000);
