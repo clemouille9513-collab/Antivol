@@ -100,6 +100,7 @@
 </style>
 </head>
 <body>
+<div id="alertBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#d6001c;color:#fff;font-weight:700;padding:14px 16px;text-align:center;font-size:16px"></div>
 <header>
   <div class="logo">
     <svg viewBox="0 0 24 24" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3b4e"/><stop offset="1" stop-color="#3d7bff"/></linearGradient></defs>
@@ -347,7 +348,7 @@
       var d = document.createElement("div"); d.className = "ph";
       var img = document.createElement("img"); img.src = p.data; img.alt = "Photo du téléphone";
       img.onclick = function () { $("#big img").src = p.data; $("#big").style.display = "flex"; };
-      var c = document.createElement("div"); c.textContent = (p.facing === "front" ? "Avant" : "Arrière") + " · " + fmtTime(p.ts);
+      var c = document.createElement("div"); c.textContent = (p.suspect ? "SUSPECT · " : "") + (p.facing === "front" ? "Avant" : "Arrière") + " · " + fmtTime(p.ts);
       var x = document.createElement("button"); x.textContent = "Supprimer"; x.className = "act"; x.style.cssText = "padding:4px 8px;font-size:12px;margin-top:4px";
       x.onclick = function () { markDeleted(p.id); photos = photos.filter(function (q) { return q !== p; }); save("antivol_photos", photos); renderPhotos(); };
       d.appendChild(img); d.appendChild(c); d.appendChild(x); el.appendChild(d);
@@ -370,6 +371,12 @@
     touch(ts); // n'importe quel message du téléphone prouve qu'il est en vie
     if (waitingSince && ts * 1000 >= waitingSince - 5000) { waitingSince = 0; clearTimeout(waitT); toast("Le téléphone a répondu"); }
     if (type === "rtc") { rtcReply(p); return; }
+    if (type === "evt" && /^(peek|face|wrong)$/.test(p[2]) && Date.now() / 1000 - ts < 180) {
+      alertAt = Date.now();
+      var bar = $("#alertBar"), what = p[2] === "peek" ? "Quelqu'un regarde l'écran du téléphone" : p[2] === "face" ? "Visage inconnu devant le téléphone" : "Mauvais code sur le téléphone";
+      bar.textContent = "⚠ " + what + " — " + new Date(ts * 1000).toLocaleTimeString("fr-FR") + " (photo du suspect en route)"; bar.style.display = "block"; bar.onclick = function () { bar.style.display = "none"; };
+      try { ensureAudio(); var o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.4); } catch (e) {}
+    }
     if (type === "evt" && p[2] === "rtc") {
       var m = p.slice(3).join("|"); if (mq) rtcSay(m);
       if (mq && /injoignable depuis le téléphone|refusée/.test(m) && relayTry < BROKERS.length - 1 && relaySrc) { relayTry++; setTimeout(function () { relayStart(relaySrc, relayTry); }, 1500); }
@@ -423,7 +430,9 @@
           var bytes = await decryptBytes(all);
           var blob = new Blob([bytes], { type: "image/jpeg" });
           var data = await new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.readAsDataURL(blob); });
-          photos.push({ id: id, ts: parseInt(id, 10), facing: facing, data: data });
+          var sus = alertAt && Date.now() - alertAt < 120000;
+          photos.push({ id: id, ts: parseInt(id, 10), facing: facing, data: data, suspect: !!sus });
+          if (sus) { $("#big img").src = data; $("#big").style.display = "flex"; }
           photos = photos.slice(-12); save("antivol_photos", photos); renderPhotos();
           toast("Nouvelle photo reçue");
         } catch (e) {}
@@ -574,7 +583,7 @@
 
 
   // ---------- Direct par internet (WebRTC : image + son) ----------
-  var rtc_diag = "", rtcPc = null, rtcId = "", rtcParts = {}, rtcTimer = null;
+  var alertAt = 0, rtc_diag = "", rtcPc = null, rtcId = "", rtcParts = {}, rtcTimer = null;
   var RTC_ICE = [
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
     { urls: ["turn:freestun.net:3478", "turns:freestun.net:5349"], username: "free", credential: "free" },
