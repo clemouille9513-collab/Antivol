@@ -164,7 +164,7 @@ object Biometrics {
     }
 
     /** Résultat d'un coup d'œil : combien de visages, le propriétaire en fait-il partie, combien d'autres. */
-    class Scan(val total: Int, val owner: Boolean, val others: Int, val best: Float)
+    class Scan(val total: Int, val owner: Boolean, val others: Int, val best: Float, val suspect: Bitmap? = null)
 
     fun analyze(ctx: Context, jpeg: ByteArray): Scan {
         val own = load(ctx, "face_emb")
@@ -172,16 +172,17 @@ object Biometrics {
         // Les visages minuscules (passants au loin) sont ignorés ; celui d'un curieux derrière l'épaule reste assez grand.
         val f = faces(bmp).filter { it.width >= 70 }.take(5)
         if (f.isEmpty()) return Scan(0, false, 0, 0f)
-        if (own == null) return Scan(f.size, false, f.size, 0f)
+        if (own == null) return Scan(f.size, false, f.size, 0f, f.getOrNull(1) ?: f[0])
         var owner = false
         var others = 0
         var best = -1f
+        var suspect: Bitmap? = null
         for (face in f) {
             val c = cos(own, embedFace(ctx, face))
             best = max(best, c)
-            if (c >= FACE_THRESHOLD) owner = true else others++
+            if (c >= FACE_THRESHOLD) owner = true else { others++; if (suspect == null) suspect = face }
         }
-        return Scan(f.size, owner, others, best)
+        return Scan(f.size, owner, others, best, suspect)
     }
 
     fun checkFace(ctx: Context, jpeg: ByteArray): Result {

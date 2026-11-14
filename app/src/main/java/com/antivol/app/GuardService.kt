@@ -830,11 +830,11 @@ class GuardService : Service() {
                     peekBusy = false
                     if (sc == null || sc.total == 0) { peekStrikes = 0; return@post }
                     when {
-                        !enrolled -> if (sc.total >= 2) showPeekOverlay(sc.total) else dismissPeek()
+                        !enrolled -> if (sc.total >= 2) showPeekOverlay(sc.total, sc.suspect) else dismissPeek()
                         // Moi seul devant le téléphone : tout va bien.
                         sc.owner && sc.others == 0 -> { peekStrikes = 0; dismissPeek() }
                         // Moi + quelqu'un qui regarde par-dessus l'épaule : l'écran se cache.
-                        sc.owner -> { peekStrikes = 0; showPeekOverlay(sc.total) }
+                        sc.owner -> { peekStrikes = 0; showPeekOverlay(sc.total, sc.suspect) }
                         // Quelqu'un d'autre, sans moi : on revérifie vite, puis on verrouille.
                         // Visage mal reconnu (angle, lumière) mais pas clairement étranger : on ne bloque pas.
                         sc.best >= 0.30f || System.currentTimeMillis() < bioPausedUntil -> peekStrikes = 0
@@ -843,7 +843,7 @@ class GuardService : Service() {
                             if (peekStrikes >= 3) {
                                 peekStrikes = 0
                                 event("face", "Visage inconnu devant le téléphone (similarité ${"%.2f".format(sc.best)})")
-                                if (bytes != null) sendImage(bytes, "front", "visage inconnu devant l'écran")
+                                sendSuspect(sc.suspect, bytes, "visage inconnu devant le téléphone")
                                 triggerLock("Visage inconnu devant le téléphone")
                             } else {
                                 handler.removeCallbacks(peekRunnable)
@@ -875,10 +875,28 @@ class GuardService : Service() {
         }
     } catch (_: Exception) { 0 }
 
-    private fun showPeekOverlay(faces: Int) {
+    /** Photo du suspect : son visage seul, bien cadré (ou toute l'image si le visage n'a pas pu être découpé). */
+    private fun sendSuspect(face: Bitmap?, whole: ByteArray?, why: String) {
+        Thread {
+            try {
+                val jpeg = if (face != null) {
+                    val w = maxOf(face.width, 360)
+                    val h = (face.height * (w.toFloat() / face.width)).toInt()
+                    val big = if (w == face.width) face else Bitmap.createScaledBitmap(face, w, h, true)
+                    val bo = java.io.ByteArrayOutputStream()
+                    big.compress(Bitmap.CompressFormat.JPEG, 85, bo)
+                    bo.toByteArray()
+                } else whole
+                if (jpeg != null) sendImage(jpeg, "front", why)
+            } catch (_: Throwable) {}
+        }.start()
+    }
+
+    private fun showPeekOverlay(faces: Int, suspect: Bitmap? = null) {
         if (peekOverlay?.isShown == true || Prefs.isLocked(this)) return
         if (System.currentTimeMillis() < peekPausedUntil) return
         event("peek", "$faces visages devant l'écran")
+        if (suspect != null) sendSuspect(suspect, null, "quelqu'un regarde ton écran")
         val o = PeekOverlay(this) {
             peekOverlay = null
             // Après « Déverrouiller », on laisse une minute de tranquillité.
